@@ -24,12 +24,14 @@ def run():
 
 Thread(target=run, daemon=True).start()
 
-# --- 도구 및 게임 함수 ---
+# --- 도구 및 게임 로직 함수 ---
 def create_deck():
     deck = [r+s for s in ['♠', '♥', '◆', '♣'] for r in ['2','3','4','5','6','7','8','9','10','J','Q','K','A']]
     random.shuffle(deck)
     return deck
+
 def format_cards(hand): return " ".join(hand)
+
 def get_score(hand):
     score, aces = 0, 0
     for card in hand:
@@ -40,12 +42,14 @@ def get_score(hand):
     while score > 21 and aces: score -= 10; aces -= 1
     return score
 
-def create_embed(data):
+async def start_blackjack(channel, user, bet):
+    deck = create_deck()
+    p, d = [deck.pop(), deck.pop()], [deck.pop(), deck.pop()]
     embed = discord.Embed(title="♠️ 블랙잭 게임 ♣️", color=discord.Color.green())
-    embed.add_field(name="딜러 카드", value=f"{data['dealer_hand'][0]} [??]", inline=True)
-    embed.add_field(name="나의 카드", value=f"{format_cards(data['player_hand'])} (합: {get_score(data['player_hand'])})", inline=True)
-    embed.add_field(name="현재 베팅액", value=f"{data['bet']}원", inline=False)
-    return embed
+    embed.add_field(name="딜러 카드", value=f"{d[0]} [??]", inline=True)
+    embed.add_field(name="나의 카드", value=f"{format_cards(p)} (합: {get_score(p)})", inline=True)
+    msg = await channel.send(embed=embed)
+    game_states[user.id] = {'deck':deck, 'player_hand':p, 'dealer_hand':d, 'bet':bet, 'msg':msg}
 
 # --- 관리자 명령어 ---
 @bot.command()
