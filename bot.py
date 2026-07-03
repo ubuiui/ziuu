@@ -32,25 +32,26 @@ def create_embed(uid, data, msg="진행 중"):
     embed.set_footer(text="ㅎ:히트, ㅅ:스테이, ㄷ:더블, ㅍ:포기")
     return embed
 
+async def update_msg(msg, uid, data, status):
+    """메시지 업데이트 안전 함수"""
+    try:
+        await msg.edit(embed=create_embed(uid, data, status))
+    except discord.NotFound: # 메시지가 삭제된 경우 새로 보냄
+        return await msg.channel.send(embed=create_embed(uid, data, status))
+    return msg
+
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
+    if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능.")
+    if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액 부족.")
+    if uid in game_states: return await ctx.send("이미 게임 중입니다.")
     
-    # [최소 배팅 확인]
-    if bet < 1000:
-        return await ctx.send("⚠️ 최소 배팅 금액은 1000원부터 가능합니다.")
-    
-    # [잔액 확인]
-    if bet > user_money.get(uid, 1000):
-        await ctx.send("❌ 잔액이 부족하여 게임을 종료합니다.")
-        return
-
-    if uid in game_states: return await ctx.send("이미 진행 중인 게임이 있습니다.")
-    
+    game_states[uid] = True
     deck = [r+s for s in ['♠','♥','◆','♣'] for r in ['2','3','4','5','6','7','8','9','10','J','Q','K','A']]
     random.shuffle(deck)
     p, d = [deck.pop(), deck.pop()], [deck.pop(), deck.pop()]
     data = {'deck': deck, 'p': p, 'd': d, 'bet': bet}
-    game_states[uid] = True
+    
     msg = await ctx.send(embed=create_embed(uid, data))
     
     while True:
@@ -63,69 +64,53 @@ async def play_blackjack(ctx, bet):
                 p.append(deck.pop())
                 if get_score(p) > 21:
                     user_money[uid] = user_money.get(uid, 1000) - bet
-                    await msg.edit(embed=create_embed(uid, data, "💥 버스트! 패배"))
+                    msg = await update_msg(msg, uid, data, "💥 버스트! 패배")
                     break
-                await msg.edit(embed=create_embed(uid, data))
+                msg = await update_msg(msg, uid, data, "진행 중")
+            
             elif res.content == 'ㅅ':
                 while get_score(d) < 17: d.append(deck.pop())
                 ps, ds = get_score(p), get_score(d)
                 res_msg = "🏆 승리!" if (ds > 21 or ps > ds) else ("❌ 패배!" if ps < ds else "🤝 무승부")
-                if "승리" in res_msg: user_money[uid] += bet
-                elif "패배" in res_msg: user_money[uid] -= bet
-                await msg.edit(embed=create_embed(uid, data, f"{res_msg} (결과 확정)"))
+                if "승리" in res_msg: user_money[uid] = user_money.get(uid, 1000) + bet
+                elif "패배" in res_msg: user_money[uid] = user_money.get(uid, 1000) - bet
+                msg = await update_msg(msg, uid, data, res_msg)
                 break
+                
             elif res.content == 'ㄷ':
                 if (bet * 2) > user_money.get(uid, 1000): 
-                    await ctx.send("⚠️ 잔액이 부족합니다. 게임을 종료합니다."); break
+                    await ctx.send("⚠️ 잔액 부족으로 더블 불가"); continue
                 bet *= 2; p.append(deck.pop()); data['bet'] = bet
-                await msg.edit(embed=create_embed(uid, data, "더블다운!"))
+                msg = await update_msg(msg, uid, data, "더블다운!")
                 continue
+                
             elif res.content == 'ㅍ':
-                user_money[uid] -= (bet // 2)
-                await msg.edit(embed=create_embed(uid, data, "🏳️ 포기함"))
+                user_money[uid] = user_money.get(uid, 1000) - (bet // 2)
+                msg = await update_msg(msg, uid, data, "🏳️ 포기함")
                 break
-        except: break
+        except asyncio.TimeoutError: break
     
     del game_states[uid]
-    
-    # 종료 후 잔액 확인
-    final_money = user_money.get(uid, 1000)
-    prompt = await ctx.send(f"🔄 다음 게임? (1:동일베팅, 2:2배베팅, 3:종료) [자산: {final_money}원]")
+    prompt = await ctx.send(f"🔄 다음 게임? (1:동일, 2:2배, 3:종료) [자산: {user_money.get(uid, 1000)}원]")
     try:
-        next_c = await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content in ['1','2','3'], timeout=15.0)
+        next_c = await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content in ['1','2','3'], timeout=20.0)
         await next_c.delete(); await prompt.delete()
-        
-        if next_c.content == '1':
-            if bet > final_money: await ctx.send("❌ 잔액이 부족하여 게임을 종료합니다."); return
-            await play_blackjack(ctx, bet)
-        elif next_c.content == '2':
-            if (bet * 2) > final_money: await ctx.send("❌ 잔액이 부족하여 게임을 종료합니다."); return
-            await play_blackjack(ctx, bet * 2)
+        if next_c.content == '1': await play_blackjack(ctx, bet)
+        elif next_c.content == '2': await play_blackjack(ctx, bet * 2)
         else: await ctx.send("게임을 종료합니다.")
     except: await prompt.delete()
 
-# --- 명령어 ---
+@bot.command()
+async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 @bot.command()
 async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
-
-@bot.command()
-async def 블랙잭(ctx, bet: int = 1000): # 기본값 1000으로 수정
-    await play_blackjack(ctx, bet)
-
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def 입금(ctx, m: discord.Member, a: int):
+async def 입금(ctx, m: discord.Member, a: int): 
     user_money[m.id] = user_money.get(m.id, 1000) + a
-    await ctx.send(f"✅ {m.name} 지급 완료. (현재: {user_money[m.id]}원)")
-
+    await ctx.send(f"✅ {m.name} 지급 완료.")
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def 공지(ctx, ch: discord.TextChannel, *, t):
-    await ch.send(f"📢 **[공지]**\n\n{t}"); await ctx.send("✅ 완료")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def 청소(ctx, n: int):
-    await ctx.channel.purge(limit=n + 1)
+async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 bot.run(os.environ['BOT_TOKEN'])
