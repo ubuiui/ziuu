@@ -76,10 +76,17 @@ async def on_message(message):
 # --- 관리자 명령어 ---
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def 공지(ctx, channel: discord.TextChannel, title: str, *, content: str):
+async def 공지(ctx, channel: discord.TextChannel, *, args: str):
+    # args는 '제목 내용' 전체를 한 번에 받습니다.
+    # 첫 번째 단어를 제목으로, 나머지를 내용으로 분리
+    parts = args.split(' ', 1)
+    title = parts[0]
+    content = parts[1] if len(parts) > 1 else "내용 없음"
+    
     embed = discord.Embed(title=title, description=content, color=discord.Color.blue())
+    embed.set_footer(text=f"관리자 {ctx.author.name} 작성")
     await channel.send(embed=embed)
-    await ctx.send("📢 공지 전송 완료.")
+    await ctx.send("📢 공지 완료.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
