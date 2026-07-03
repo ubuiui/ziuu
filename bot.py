@@ -1,9 +1,5 @@
-import os
-import discord
+import os, discord, random, asyncio, yt_dlp
 from discord.ext import commands
-import yt_dlp
-import random
-import asyncio
 from flask import Flask
 from threading import Thread
 
@@ -33,52 +29,76 @@ def get_score(hand):
     while score > 21 and aces: score -= 10; aces -= 1
     return score
 
-def create_embed(data, status="진행 중"):
+def create_embed(data, status="진행 중", result_msg=""):
     embed = discord.Embed(title="♠️ 블랙잭 실시간 게임 ♣️", color=discord.Color.gold())
-    d_cards = f"{data['dealer_hand'][0]} [??]" if status == "진행 중" else " ".join(data['dealer_hand'])
+    d_cards = " ".join(data['dealer_hand']) if status != "진행 중" else f"{data['dealer_hand'][0]} [??]"
     d_score = get_score(data['dealer_hand']) if status != "진행 중" else "??"
-    
     embed.add_field(name="딜러 카드", value=f"{d_cards} (합: {d_score})", inline=True)
     embed.add_field(name="나의 카드", value=f"{' '.join(data['player_hand'])} (합: {get_score(data['player_hand'])})", inline=True)
-    embed.set_footer(text=f"상태: {status} | ㅎ:히트, ㅅ:스테이 (15초 내 입력)")
+    embed.add_field(name="결과", value=f"베팅액: {data['bet']}원\n{result_msg}", inline=False)
+    embed.set_footer(text="ㅎ:히트, ㅅ:스테이, ㄷ:더블, ㅍ:포기 (15초 내 입력)")
     return embed
 
 # --- 게임 로직 ---
 @bot.command()
 async def 블랙잭(ctx, bet: int = 100):
     if ctx.author.id in game_states: return await ctx.send("이미 진행 중인 게임이 있습니다!")
+    
     deck = create_deck()
     p, d = [deck.pop(), deck.pop()], [deck.pop(), deck.pop()]
     data = {'deck': deck, 'player_hand': p, 'dealer_hand': d, 'bet': bet}
+    
+    # 21 블랙잭 체크 (10배 보상)
+    if get_score(p) == 21:
+        win_amt = bet * 10
+        user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) + win_amt
+        return await ctx.send(f"🎉 **블랙잭(21)!** 10배 당첨! +{win_amt}원 획득.")
+
     msg = await ctx.send(embed=create_embed(data))
     game_states[ctx.author.id] = {**data, 'msg': msg}
 
     try:
         while True:
-            # 15초 타임아웃
-            def check(m): return m.author == ctx.author and m.content in ['ㅎ', 'ㅅ']
-            choice = await bot.wait_for('message', check=check, timeout=15.0)
+            choice = await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content in ['ㅎ','ㅅ','ㄷ','ㅍ'], timeout=15.0)
             data = game_states[ctx.author.id]
             
-            if choice.content == 'ㅎ':
+            if choice.content == 'ㅎ': # 히트
                 data['player_hand'].append(data['deck'].pop())
                 if get_score(data['player_hand']) > 21:
-                    user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) - bet
-                    await msg.edit(embed=create_embed(data, "💥 버스트! 패배"))
+                    user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) - data['bet']
+                    await msg.edit(embed=create_embed(data, "버스트", f"패배! -{data['bet']}원"))
                     break
                 await msg.edit(embed=create_embed(data))
-            else: # 스테이
+            
+            elif choice.content == 'ㄷ': # 더블 (베팅 2배)
+                data['bet'] *= 2
+                data['player_hand'].append(data['deck'].pop())
+                # 강제 스테이 로직
+                choice = type('obj', (object,), {'content': 'ㅅ'})()
+            
+            elif choice.content == 'ㅍ': # 포기 (서렌더)
+                loss = data['bet'] // 2
+                user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) - loss
+                await msg.edit(embed=create_embed(data, "포기", f"절반만 차감됨! -{loss}원"))
+                break
+
+            if choice.content == 'ㅅ': # 스테이
                 while get_score(data['dealer_hand']) < 17: data['dealer_hand'].append(data['deck'].pop())
                 p_s, d_s = get_score(data['player_hand']), get_score(data['dealer_hand'])
-                res = "🎉 승리!" if (d_s > 21 or p_s > d_s) else ("😭 패배" if p_s < d_s else "🤝 무승부")
-                user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) + (bet if res=="🎉 승리!" else (-bet if res=="😭 패배" else 0))
-                await msg.edit(embed=create_embed(data, res))
+                if d_s > 21 or p_s > d_s:
+                    user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) + data['bet']
+                    res = f"승리! +{data['bet']}원"
+                elif p_s < d_s:
+                    user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) - data['bet']
+                    res = f"패배! -{data['bet']}원"
+                else: res = "무승부!"
+                await msg.edit(embed=create_embed(data, "종료", res))
                 break
     except asyncio.TimeoutError:
-        await ctx.send("⏱️ 15초가 지나 게임이 종료되었습니다.")
+        await ctx.send("⏱️ 시간이 초과되었습니다.")
     finally:
         if ctx.author.id in game_states: del game_states[ctx.author.id]
-        await msg.add_reaction("🔄") # 재시작 리액션
+        await msg.add_reaction("🔄")
 
 # --- 관리자 및 기타 명령어 ---
 @bot.command()
