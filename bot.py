@@ -16,7 +16,7 @@ app = Flask('')
 def home(): return "봇이 살아있어요!"
 Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080))), daemon=True).start()
 
-# --- 도구 함수 ---
+# --- 블랙잭 도구 ---
 def get_score(hand):
     score, aces = 0, 0
     for card in hand:
@@ -36,23 +36,20 @@ def create_embed(uid, data, status="진행 중", result_msg=""):
     embed.set_footer(text="ㅎ:히트, ㅅ:스테이, ㄷ:더블, ㅍ:포기")
     return embed
 
-# --- 블랙잭 로직 ---
+# --- 게임 로직 ---
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
     deck = [r+s for s in ['♠', '♥', '◆', '♣'] for r in ['2','3','4','5','6','7','8','9','10','J','Q','K','A']]
     random.shuffle(deck)
-    p, d = [deck.pop(), deck.pop()], [deck.pop(), deck.pop()]
-    data = {'deck': deck, 'player_hand': p, 'dealer_hand': d, 'bet': bet}
-    game_states[uid] = True
+    data = {'deck': deck, 'player_hand': [deck.pop(), deck.pop()], 'dealer_hand': [deck.pop(), deck.pop()], 'bet': bet}
     
-    # 블랙잭 즉시 승리 체크 (10배)
-    if get_score(p) == 21:
+    if get_score(data['player_hand']) == 21:
         win = bet * 10
         user_money[uid] = user_money.get(uid, 1000) + win
-        await ctx.send(f"🎉 **블랙잭(21)!** 10배 당첨! +{win}원 획득. (총 자산: {user_money[uid]}원)")
-        del game_states[uid]
+        await ctx.send(f"🎉 **블랙잭(21)!** 10배 당첨! +{win}원. (총 자산: {user_money[uid]}원)")
         return
 
+    game_states[uid] = True
     msg = await ctx.send(embed=create_embed(uid, data))
     
     while True:
@@ -84,7 +81,7 @@ async def play_blackjack(ctx, bet):
         except asyncio.TimeoutError:
             await ctx.send("⏱️ 시간 초과 종료.")
             break
-    
+            
     del game_states[uid]
     await ctx.send("🔄 다음 게임? (1:동일배팅, 2:2배배팅, 3:그만하기)")
     try:
@@ -93,16 +90,11 @@ async def play_blackjack(ctx, bet):
         elif next_c.content == '2': await play_blackjack(ctx, bet * 2)
     except: pass
 
-# --- 명령어 ---
+# --- 통합 명령어 ---
 @bot.command()
-async def 입금(ctx, member: discord.Member, amount: int):
-    user_money[member.id] = user_money.get(member.id, 1000) + amount
-    await ctx.send(f"✅ {member.name}님에게 {amount}원을 지급했습니다.")
-
-@bot.command()
-async def 회수(ctx, member: discord.Member, amount: int):
-    user_money[member.id] = user_money.get(member.id, 1000) - amount
-    await ctx.send(f"⚠️ {member.name}님에게서 {amount}원을 회수했습니다.")
+async def 상태(ctx):
+    uptime = datetime.datetime.utcnow() - start_time
+    await ctx.send(f"🤖 상태: 정상 | 가동: {uptime.days}일 {uptime.seconds//3600}시간 | 핑: {round(bot.latency * 1000)}ms")
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 100):
@@ -110,12 +102,35 @@ async def 블랙잭(ctx, bet: int = 100):
     await play_blackjack(ctx, bet)
 
 @bot.command()
-async def 공지(ctx, channel: discord.TextChannel, *, text): await channel.send(f"📢 {text}")
+@commands.has_permissions(administrator=True)
+async def 입금(ctx, m: discord.Member, a: int):
+    user_money[m.id] = user_money.get(m.id, 1000) + a
+    await ctx.send(f"✅ {m.name} 지급 완료.")
+
 @bot.command()
-async def 청소(ctx, amount: int): await ctx.channel.purge(limit=amount + 1)
+@commands.has_permissions(administrator=True)
+async def 회수(ctx, m: discord.Member, a: int):
+    user_money[m.id] = user_money.get(m.id, 1000) - a
+    await ctx.send(f"⚠️ {m.name} 회수 완료.")
+
 @bot.command()
-async def 상태(ctx):
-    uptime = datetime.datetime.utcnow() - start_time
-    await ctx.send(f"🤖 정상 | 가동: {uptime.days}일 {uptime.seconds//3600}시간 | 핑: {round(bot.latency * 1000)}ms")
+async def 재생(ctx, url: str):
+    if not ctx.author.voice: return await ctx.send("음성 채널에 들어가주세요!")
+    vc = await ctx.author.voice.channel.connect() if not ctx.voice_client else ctx.voice_client
+    with yt_dlp.YoutubeDL({'format': 'bestaudio'}) as ydl:
+        vc.play(discord.FFmpegPCMAudio(ydl.extract_info(url, download=False)['url']))
+        await ctx.send("🎵 노래 재생 중!")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 공지(ctx, ch: discord.TextChannel, *, t): await ch.send(f"📢 {t}")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 말해(ctx, ch: discord.TextChannel, *, t): await ch.send(t)
 
 bot.run(os.environ['BOT_TOKEN'])
