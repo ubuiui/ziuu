@@ -27,23 +27,32 @@ def get_score(hand):
     return score
 
 def create_embed(uid, data, status="진행 중", result_msg=""):
-    embed = discord.Embed(title="♠️ 블랙잭 실시간 게임 ♣️", color=discord.Color.gold())
+    embed = discord.Embed(title="♠️ 블랙잭 게임 ♣️", color=discord.Color.gold())
     d_cards = " ".join(data['dealer_hand']) if status != "진행 중" else f"{data['dealer_hand'][0]} [??]"
     d_score = "?" if status == "진행 중" else get_score(data['dealer_hand'])
     embed.add_field(name="딜러 카드", value=f"{d_cards} (합: {d_score})", inline=True)
     embed.add_field(name="나의 카드", value=f"{' '.join(data['player_hand'])} (합: {get_score(data['player_hand'])})", inline=True)
-    embed.add_field(name="상태 정보", value=f"베팅액: {data['bet']}원\n현재 잔액: {user_money.get(uid, 1000)}원\n{result_msg}", inline=False)
+    embed.add_field(name="상태 정보", value=f"베팅액: {data['bet']}원\n총 자산: {user_money.get(uid, 1000)}원\n{result_msg}", inline=False)
     embed.set_footer(text="ㅎ:히트, ㅅ:스테이, ㄷ:더블, ㅍ:포기")
     return embed
 
-# --- 게임 로직 ---
+# --- 블랙잭 로직 ---
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
     deck = [r+s for s in ['♠', '♥', '◆', '♣'] for r in ['2','3','4','5','6','7','8','9','10','J','Q','K','A']]
     random.shuffle(deck)
-    data = {'deck': deck, 'player_hand': [deck.pop(), deck.pop()], 'dealer_hand': [deck.pop(), deck.pop()], 'bet': bet}
+    p, d = [deck.pop(), deck.pop()], [deck.pop(), deck.pop()]
+    data = {'deck': deck, 'player_hand': p, 'dealer_hand': d, 'bet': bet}
     game_states[uid] = True
     
+    # 블랙잭 즉시 승리 체크 (10배)
+    if get_score(p) == 21:
+        win = bet * 10
+        user_money[uid] = user_money.get(uid, 1000) + win
+        await ctx.send(f"🎉 **블랙잭(21)!** 10배 당첨! +{win}원 획득. (총 자산: {user_money[uid]}원)")
+        del game_states[uid]
+        return
+
     msg = await ctx.send(embed=create_embed(uid, data))
     
     while True:
@@ -75,7 +84,7 @@ async def play_blackjack(ctx, bet):
         except asyncio.TimeoutError:
             await ctx.send("⏱️ 시간 초과 종료.")
             break
-            
+    
     del game_states[uid]
     await ctx.send("🔄 다음 게임? (1:동일배팅, 2:2배배팅, 3:그만하기)")
     try:
@@ -84,24 +93,29 @@ async def play_blackjack(ctx, bet):
         elif next_c.content == '2': await play_blackjack(ctx, bet * 2)
     except: pass
 
+# --- 명령어 ---
+@bot.command()
+async def 입금(ctx, member: discord.Member, amount: int):
+    user_money[member.id] = user_money.get(member.id, 1000) + amount
+    await ctx.send(f"✅ {member.name}님에게 {amount}원을 지급했습니다.")
+
+@bot.command()
+async def 회수(ctx, member: discord.Member, amount: int):
+    user_money[member.id] = user_money.get(member.id, 1000) - amount
+    await ctx.send(f"⚠️ {member.name}님에게서 {amount}원을 회수했습니다.")
+
 @bot.command()
 async def 블랙잭(ctx, bet: int = 100):
     if ctx.author.id in game_states: return await ctx.send("이미 진행 중인 게임이 있습니다!")
     await play_blackjack(ctx, bet)
 
-# --- 노래 및 시스템 명령어 ---
 @bot.command()
-async def 재생(ctx, url: str):
-    if not ctx.author.voice: return await ctx.send("음성 채널에 들어가주세요!")
-    vc = await ctx.author.voice.channel.connect() if not ctx.voice_client else ctx.voice_client
-    with yt_dlp.YoutubeDL({'format': 'bestaudio'}) as ydl:
-        vc.play(discord.FFmpegPCMAudio(ydl.extract_info(url, download=False)['url']))
-        await ctx.send("🎵 재생 시작!")
-
+async def 공지(ctx, channel: discord.TextChannel, *, text): await channel.send(f"📢 {text}")
 @bot.command()
-@commands.has_permissions(administrator=True)
+async def 청소(ctx, amount: int): await ctx.channel.purge(limit=amount + 1)
+@bot.command()
 async def 상태(ctx):
     uptime = datetime.datetime.utcnow() - start_time
-    await ctx.send(f"🤖 상태: 정상 | 가동: {uptime.days}일 {uptime.seconds//3600}시간 | 핑: {round(bot.latency * 1000)}ms")
+    await ctx.send(f"🤖 정상 | 가동: {uptime.days}일 {uptime.seconds//3600}시간 | 핑: {round(bot.latency * 1000)}ms")
 
 bot.run(os.environ['BOT_TOKEN'])
