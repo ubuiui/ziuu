@@ -9,7 +9,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 user_money = {}
 game_states = {}
 
-# --- 웹 서버 ---
+# 웹 서버
 app = Flask('')
 @app.route('/')
 def home(): return "봇이 살아있어요!"
@@ -34,7 +34,16 @@ def create_embed(uid, data, msg="진행 중"):
 
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
-    if bet > user_money.get(uid, 1000): return await ctx.send(f"⚠️ 자산 부족! (현재: {user_money.get(uid, 1000)}원)")
+    
+    # [최소 배팅 확인]
+    if bet < 1000:
+        return await ctx.send("⚠️ 최소 배팅 금액은 1000원부터 가능합니다.")
+    
+    # [잔액 확인]
+    if bet > user_money.get(uid, 1000):
+        await ctx.send("❌ 잔액이 부족하여 게임을 종료합니다.")
+        return
+
     if uid in game_states: return await ctx.send("이미 진행 중인 게임이 있습니다.")
     
     deck = [r+s for s in ['♠','♥','◆','♣'] for r in ['2','3','4','5','6','7','8','9','10','J','Q','K','A']]
@@ -47,7 +56,7 @@ async def play_blackjack(ctx, bet):
     while True:
         try:
             res = await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content in ['ㅎ','ㅅ','ㄷ','ㅍ'], timeout=30.0)
-            try: await res.delete() # 사용자가 입력한 메시지 삭제
+            try: await res.delete()
             except: pass
             
             if res.content == 'ㅎ':
@@ -61,11 +70,13 @@ async def play_blackjack(ctx, bet):
                 while get_score(d) < 17: d.append(deck.pop())
                 ps, ds = get_score(p), get_score(d)
                 res_msg = "🏆 승리!" if (ds > 21 or ps > ds) else ("❌ 패배!" if ps < ds else "🤝 무승부")
-                user_money[uid] += (bet if "승리" in res_msg else (-bet if "패배" in res_msg else 0))
+                if "승리" in res_msg: user_money[uid] += bet
+                elif "패배" in res_msg: user_money[uid] -= bet
                 await msg.edit(embed=create_embed(uid, data, f"{res_msg} (결과 확정)"))
                 break
             elif res.content == 'ㄷ':
-                if (bet * 2) > user_money.get(uid, 1000): continue
+                if (bet * 2) > user_money.get(uid, 1000): 
+                    await ctx.send("⚠️ 잔액이 부족합니다. 게임을 종료합니다."); break
                 bet *= 2; p.append(deck.pop()); data['bet'] = bet
                 await msg.edit(embed=create_embed(uid, data, "더블다운!"))
                 continue
@@ -76,17 +87,31 @@ async def play_blackjack(ctx, bet):
         except: break
     
     del game_states[uid]
-    prompt = await ctx.send(f"🔄 다음 게임? (1:동일베팅, 2:2배베팅, 3:종료) [자산: {user_money.get(uid, 1000)}원]")
+    
+    # 종료 후 잔액 확인
+    final_money = user_money.get(uid, 1000)
+    prompt = await ctx.send(f"🔄 다음 게임? (1:동일베팅, 2:2배베팅, 3:종료) [자산: {final_money}원]")
     try:
         next_c = await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content in ['1','2','3'], timeout=15.0)
-        await next_c.delete()
-        await prompt.delete()
-        if next_c.content == '1': await ctx.send("동일한 금액으로 게임을 진행합니다."); await play_blackjack(ctx, bet)
-        elif next_c.content == '2': await ctx.send("2배 배팅으로 게임을 진행합니다."); await play_blackjack(ctx, bet * 2)
+        await next_c.delete(); await prompt.delete()
+        
+        if next_c.content == '1':
+            if bet > final_money: await ctx.send("❌ 잔액이 부족하여 게임을 종료합니다."); return
+            await play_blackjack(ctx, bet)
+        elif next_c.content == '2':
+            if (bet * 2) > final_money: await ctx.send("❌ 잔액이 부족하여 게임을 종료합니다."); return
+            await play_blackjack(ctx, bet * 2)
         else: await ctx.send("게임을 종료합니다.")
     except: await prompt.delete()
 
-# --- 관리자 명령어 ---
+# --- 명령어 ---
+@bot.command()
+async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
+
+@bot.command()
+async def 블랙잭(ctx, bet: int = 1000): # 기본값 1000으로 수정
+    await play_blackjack(ctx, bet)
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 입금(ctx, m: discord.Member, a: int):
@@ -102,8 +127,5 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int):
     await ctx.channel.purge(limit=n + 1)
-
-@bot.command()
-async def 블랙잭(ctx, bet: int = 100): await play_blackjack(ctx, bet)
 
 bot.run(os.environ['BOT_TOKEN'])
