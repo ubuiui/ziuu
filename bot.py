@@ -9,7 +9,7 @@ try:
     from flask import Flask
 except ImportError:
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "flask", "aiohttp"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "flask"])
     import discord
     from flask import Flask
 
@@ -27,7 +27,7 @@ NOTICE_CHANNEL_ID = 1520830878513762375
 IS_LIVE_NOW = False 
 # --------------------
 
-# 웹 서버 (Render 포트 감지 통과용)
+# 웹 서버 (Render 포트 감지 무조건 통과용)
 app = Flask('')
 @app.route('/')
 def home(): 
@@ -72,7 +72,7 @@ class BlackjackGameView(discord.ui.View):
             try: await self.msg_obj.edit(content="⏱️ 시간 초과로 게임이 취소되었습니다.", view=None)
             except: pass
 
-    @discord.ui.button(label="히트 (ㅎ)", style=discord.Style.primary, custom_id="hit")
+    @discord.ui.button(label="히트 (ㅎ)", style=discord.ButtonStyle.primary, custom_id="hit")
     async def hit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         self.data['p'].append(self.data['deck'].pop())
@@ -89,7 +89,7 @@ class BlackjackGameView(discord.ui.View):
         else:
             await self.msg_obj.edit(embed=create_embed(self.uid, self.data, "진행 중"))
 
-    @discord.ui.button(label="스테이 (ㅅ)", style=discord.Style.success, custom_id="stay")
+    @discord.ui.button(label="스테이 (ㅅ)", style=discord.ButtonStyle.success, custom_id="stay")
     async def stay_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         self.is_finished = True
@@ -107,7 +107,7 @@ class BlackjackGameView(discord.ui.View):
         self.stop()
         await ask_next_game(self.ctx, self.data['bet'])
 
-    @discord.ui.button(label="더블 (ㄷ)", style=discord.Style.secondary, custom_id="double")
+    @discord.ui.button(label="더블 (ㄷ)", style=discord.ButtonStyle.secondary, custom_id="double")
     async def double_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if (self.data['bet'] * 2) > user_money.get(self.uid, 1000):
             return await interaction.response.send_message("⚠️ 잔액이 부족하여 더블다운이 불가능합니다.", ephemeral=True)
@@ -133,7 +133,7 @@ class BlackjackGameView(discord.ui.View):
         self.stop()
         await ask_next_game(self.ctx, self.data['bet'])
 
-    @discord.ui.button(label="포기 (ㅍ)", style=discord.Style.danger, custom_id="surrender")
+    @discord.ui.button(label="포기 (ㅍ)", style=discord.ButtonStyle.danger, custom_id="surrender")
     async def surrender_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         self.is_finished = True
@@ -156,21 +156,21 @@ class NextGameView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="1️⃣ 동일 배팅 진행", style=discord.Style.success)
+    @discord.ui.button(label="1️⃣ 동일 배팅 진행", style=discord.ButtonStyle.success)
     async def re_same(self, interaction: discord.Interaction, button: discord.ui.Button):
         try: await interaction.message.delete()
         except: pass
         self.stop()
         await play_blackjack(self.ctx, self.current_bet)
 
-    @discord.ui.button(label="2️⃣ 2배 배팅 진행", style=discord.Style.primary)
+    @discord.ui.button(label="2️⃣ 2배 배팅 진행", style=discord.ButtonStyle.primary)
     async def re_double(self, interaction: discord.Interaction, button: discord.ui.Button):
         try: await interaction.message.delete()
         except: pass
         self.stop()
         await play_blackjack(self.ctx, self.current_bet * 2)
 
-    @discord.ui.button(label="3️⃣ 게임 종료", style=discord.Style.danger)
+    @discord.ui.button(label="3️⃣ 게임 종료", style=discord.ButtonStyle.danger)
     async def stop_game(self, interaction: discord.Interaction, button: discord.ui.Button):
         try: await interaction.message.delete()
         except: pass
@@ -245,16 +245,52 @@ async def check_youtube_live():
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user.name}")
+    print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
     if not check_youtube_live.is_running():
         check_youtube_live.start()
 
-# --- 명령어 ---
+# --- 미니게임 및 명령어 공간 ---
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
 @bot.command()
 async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
+
+@bot.command()
+async def 사다리(ctx, *choices: str):
+    if not choices:
+        return await ctx.send("⚠️ 사용법: `!사다리 항목1 항목2 항목3 ...` 형태로 입력해 주세요!")
+    
+    chosen = random.choice(choices)
+    embed = discord.Embed(title="🪜 사다리 타기 결과", color=discord.Color.blue())
+    embed.add_field(name="선택된 후보들", value=", ".join(choices), inline=False)
+    embed.add_field(name="🎯 낙점 결과", value=f"**{chosen}**", inline=False)
+    embed.set_footer(text=f"요청자: {ctx.author.name}")
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def 룰렛(ctx, *choices: str):
+    if not choices:
+        return await ctx.send("⚠️ 사용법: `!룰렛 항목1 항목2 항목3 ...` 형태로 입력해 주세요!")
+    
+    embed = discord.Embed(title="🎰 룰렛 돌리는 중...", description="🔮 과연 결과는?! \n\n[ 🪙 🟥 🟨 🟩 🟦 🟪 ]", color=discord.Color.purple())
+    msg = await ctx.send(embed=embed)
+    
+    # 긴장감을 위한 룰렛 회전 연출 효과
+    spin_emojis = ["[ 🟥 🟨 🟩 🟦 🟪 ]", "[ 🟪 🟥 🟨 🟩 🟦 ]", "[ 🟦 🟪 🟥 🟨 🟩 ]", "[ 🟩 🟦 🟪 🟥 🟨 ]"]
+    for i in range(3):
+        await asyncio.sleep(0.6)
+        embed.description = f"🔮 과연 결과는?! \n\n{spin_emojis[i % len(spin_emojis)]}"
+        await msg.edit(embed=embed)
+        
+    await asyncio.sleep(0.6)
+    chosen = random.choice(choices)
+    
+    result_embed = discord.Embed(title="🎯 룰렛 결과 발표", color=discord.Color.green())
+    result_embed.add_field(name="전체 후보 리스트", value=", ".join(choices), inline=False)
+    result_embed.add_field(name="🏆 최종 당첨 항목", value=f"✨ **{chosen}** ✨", inline=False)
+    result_embed.set_footer(text=f"요청자: {ctx.author.name}")
+    await msg.edit(embed=result_embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -294,29 +330,32 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 
-# 🚀 [Render 맞춤형 - 단일 비동기 메인 실행 엔진]
+# 🚀 [메인 비동기 구동 엔진]
 async def main():
     token = os.environ.get('BOT_TOKEN')
     
-    # 만약 환경변수 토큰이 잘못 지정되었다면, 뻗지 않고 안내 로그를 남기도록 조치
     if not token or len(token.strip()) < 10:
-        print("\n❌ [환경변수 등록 오류 알림]")
-        print("Render 대시보드의 Environment 메뉴에 'BOT_TOKEN' 값이 정확히 들어가 있는지 확인하세요.\n")
+        print("\n❌ [🚨 경고] 'BOT_TOKEN'이 환경변수에 등록되지 않았거나 올바르지 않습니다.")
+        print("토큰 입력을 완료할 때까지 Render 포트 유지를 위해 대기 모드로 진입합니다...\n")
         while True:
             await asyncio.sleep(3600)
 
-    async with bot:
-        await bot.start(token)
+    try:
+        async with bot:
+            await bot.start(token)
+    except discord.errors.LoginFailure:
+        print("\n❌ [🚨 토큰 오류] 디스코드 인증에 실패했습니다! 토큰 값이 정확한지 대시보드 환경변수를 확인하세요.")
+        print("포트 연결을 끊지 않기 위해 대기 상태를 유지합니다.\n")
+        while True:
+            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    # 포트를 점유할 웹 서버를 백그라운드 스레드로 격리하여 선행 가동 (Render 패스용 핵심)
     from threading import Thread
     port = int(os.environ.get("PORT", 10000))
-    print(f"📡 Render 전용 포트 감지 시스템 가동: {port}")
+    print(f"📡 Render 전용 포트 감지 웹 서버 기동: {port}")
     
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
     server_thread.start()
 
-    # 메인 비동기 루프로 디스코드 봇 진입
     asyncio.run(main())
