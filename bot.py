@@ -1,5 +1,4 @@
 import os, sys, asyncio, datetime, random
-from threading import Thread
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -10,11 +9,12 @@ try:
     from flask import Flask
 except ImportError:
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "flask"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "flask", "aiohttp"])
     import discord
     from flask import Flask
 
 from discord.ext import commands, tasks
+import aiohttp
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -23,7 +23,7 @@ user_money = {}
 game_states = {}
 
 # --- [설정 공간] ---
-ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데/live"  
+ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
 NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
 
@@ -35,7 +35,7 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 설정 (Render의 헬스체크 신호를 즉시 수신하도록 세팅)
+# 웹 서버 설정 (Render 헬스체크 통과용 기본 응답)
 app = Flask('')
 @app.route('/')
 def home(): 
@@ -301,16 +301,26 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 
-# 🚀 포트 개방 후 디스코드 봇을 병렬 실행시키는 비동기 스레드 브릿지
-def run_discord_bot():
+# 🚀 [Render 전용 - 단일 비동기 메인 루프 실행 엔진]
+async def main():
     token = os.environ.get('BOT_TOKEN')
-    if token:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(bot.start(token))
-    else:
-        print("❌ 'BOT_TOKEN' 환경변수가 없습니다.")
+    if not token:
+        print("❌ 'BOT_TOKEN' 환경변수가 없습니다. 대시보드를 확인하세요.")
+        return
+
+    # 1. 포트를 점유할 Flask 서버를 완전히 독립된 비동기 루프로 백그라운드 구동
+    port = int(os.environ.get("PORT", 10000))
+    print(f"📡 Render 전용 포트 감지 시스템 가동: {port}")
+    
+    # 꼼수 없이 Werkzeug 서버를 비동기 이벤트 루프와 충돌 나지 않게 스레드로 안전 격리 실행
+    from threading import Thread
+    server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
+    server_thread.daemon = True
+    server_thread.start()
+
+    # 2. 메인 스레드는 온전히 디스코드 봇 구동에 자원을 100% 집중
+    async with bot:
+        await bot.start(token)
 
 if __name__ == "__main__":
-    # 포트가 완벽히 점유되기 전 봇이 가로채는 것을 막기 위해 서브 스레드로 독립 작동
-    t = Thread(target=run_discord_bot, daemon=True)
+    asyncio.run(main())
