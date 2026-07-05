@@ -13,13 +13,11 @@ user_money = {}
 game_states = {}
 
 # --- [설정 공간] ---
-ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데/live"  
-
-# ⚠️ 보내주신 ID를 문자열 형태로 안전하게 저장합니다. (파이썬 숫자 깨짐 방지)
-NOTICE_CHANNEL_ID = "1520830878513762375"  
+ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
+NOTICE_CHANNEL_ID = 1520830878513762375  # 원래 적어주신 ID 그대로 숫자로 복구했습니다.
 IS_LIVE_NOW = False 
 
-# 한글 유튜브 주소 안전 인코딩 변환 (Render 크래시 방지)
+# 한글 유튜브 주소 안전 인코딩 변환
 try:
     parsed_url = urllib.parse.urlparse(ORIGINAL_YOUTUBE_URL)
     encoded_path = urllib.parse.quote(parsed_url.path)
@@ -28,15 +26,17 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 (Render 24시간 가동 및 포트 충돌 방지)
+# 웹 서버 (Render 24시간 가동 및 포트 강제 바인딩)
 app = Flask('')
 @app.route('/')
-def home(): return "봇이 완벽하게 가동 중입니다!"
+def home(): return "봇이 가동 중입니다."
 
 def run_flask():
+    # Render는 PORT 환경변수를 무조건 매칭해줘야 status 1이 안 납니다.
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
+# Flask 서버를 백그라운드에서 즉시 실행
 Thread(target=run_flask, daemon=True).start()
 
 def get_score(hand):
@@ -240,7 +240,6 @@ async def check_youtube_live():
         if is_live and not IS_LIVE_NOW:
             IS_LIVE_NOW = True
             try:
-                # 문자열 ID를 숫자로 변환하여 안전하게 전송
                 channel = bot.get_channel(int(NOTICE_CHANNEL_ID))
                 if channel:
                     embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({ORIGINAL_YOUTUBE_URL})", color=discord.Color.red())
@@ -252,7 +251,7 @@ async def check_youtube_live():
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name}")
+    print(f"✅ 로그인 성공: {bot.user.name}")
     if not check_youtube_live.is_running():
         check_youtube_live.start()
 
@@ -300,4 +299,9 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-bot.run(os.environ.get('BOT_TOKEN'))
+# 토큰 누락 시 명확하게 로깅하고 크래시 방지
+token = os.environ.get('BOT_TOKEN')
+if not token:
+    print("❌ 에러: Render 환경 변수(Environment)에 'BOT_TOKEN'이 등록되지 않았습니다.")
+else:
+    bot.run(token)
