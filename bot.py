@@ -33,7 +33,7 @@ gift_cooldowns = {}
 disaster_cooldowns = {}   
 
 # --- [설정 공간] ---
-YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데/live"  
 NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
 # --------------------
@@ -92,7 +92,7 @@ async def ask_next_game(ctx, current_bet):
         else:
             await ctx.send("👋 게임을 종료합니다.")
     except asyncio.TimeoutError:
-        await ctx.send("⏱️ 시간 초과로 게임 선택이 취소되었습니다.")
+        await ctx.send("⏱️ 30초 내에 선택하지 않아 게임이 종료되었습니다.")
 
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
@@ -449,15 +449,11 @@ async def 슬롯(ctx, bet: int = 1000):
         embed.add_field(name="정산 결과", value=f"{msg_text}\n변동 금액: -{bet:,}원\n현재 자산: {user_money[uid]:,}원")
         await msg.edit(embed=embed)
 
-# --- 🪜 미니게임 4: 사다리 타기 배팅 게임 ---
+# --- 🪜 미니게임 4: 사다리 타기 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
 async def 사다리(ctx, bet: int = None, *, args: str = None):
-    if bet is None or not args:
-        return await ctx.send("⚠️ 사용법: `!사다리 [판돈] [항목1 항목2 항목3 ...]` (띄어쓰기로 구분)")
-    
-    choices = args.split()
-    if len(choices) < 2:
-        return await ctx.send("⚠️ 선택 항목은 최소 2개 이상 입력해 주세요!")
+    if bet is None:
+        return await ctx.send("⚠️ 사용법: `!사다리 [판돈]`")
 
     participants = await setup_multi_bet_game(ctx, bet, "사다리 타기")
     if not participants or len(participants) < 1:
@@ -467,34 +463,25 @@ async def 사다리(ctx, bet: int = None, *, args: str = None):
     deduct_msg = ""
     for p in participants:
         user_money[p.id] = user_money.get(p.id, 1000) - bet
-        deduct_msg += f"💸 **{p.name}**님 잔액에서 -{bet:,}원 차감 (남은 잔액: {user_money[p.id]:,}원)\n"
+        deduct_msg += f"💸 **{p.name}**님 잔액에서 -{bet:,}원 차감\n"
     
     await ctx.send(f"🪙 **[사다리 배팅금 즉시 차감 완료]** 🪙\n{deduct_msg}")
 
-    chosen_item = random.choice(choices)
     winner = random.choice(participants)
-    
     user_money[winner.id] = user_money.get(winner.id, 1000) + total_pool
     p_mentions = ", ".join([p.mention for p in participants])
 
     embed = discord.Embed(title="🪜 사다리 타기 결과 발표", color=discord.Color.blue())
-    embed.add_field(name="총 베팅 규모", value=f"💵 인당 {bet:,}원 (총 {len(participants)}명 참여) ➡️ 총 상금 **{total_pool:,}원**", inline=False)
-    embed.add_field(name="👥 실제 참여자 명단", value=p_mentions, inline=False)
-    embed.add_field(name="🎯 낙점된 항목", value=f"✨ **{chosen_item}**", inline=True)
-    embed.add_field(name="🏆 최종 승리자", value=f"🎉 {winner.mention} 님 독식!!", inline=True)
-    embed.add_field(name="🏦 승리자 최종 잔액", value=f"{user_money[winner.id]:,}원", inline=False)
+    embed.add_field(name="👥 참여자 명단", value=p_mentions, inline=False)
+    embed.add_field(name="🏆 최종 승리자", value=f"🎉 {winner.mention} 님 독식!!\n상금 **{total_pool:,}원**을 획득하셨습니다! (최종 잔액: {user_money[winner.id]:,}원)", inline=False)
     
     await ctx.send(content=f"🔔 {winner.mention} 축하합니다! 판돈을 모두 획득하셨습니다!", embed=embed)
 
-# --- 🎰 미니게임 5: 멀티 룰렛 배팅 게임 ---
+# --- 🎰 미니게임 5: 멀티 룰렛 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
 async def 룰렛(ctx, bet: int = None, *, args: str = None):
-    if bet is None or not args:
-        return await ctx.send("⚠️ 사용법: `!룰렛 [판돈] [항목1 항목2 항목3 ...]` (띄어쓰기로 구분)")
-    
-    choices = args.split()
-    if len(choices) < 2:
-        return await ctx.send("⚠️ 선택 항목은 최소 2개 이상 입력해 주세요!")
+    if bet is None:
+        return await ctx.send("⚠️ 사용법: `!룰렛 [판돈]`")
 
     participants = await setup_multi_bet_game(ctx, bet, "룰렛 돌리기")
     if not participants or len(participants) < 1:
@@ -504,36 +491,96 @@ async def 룰렛(ctx, bet: int = None, *, args: str = None):
     deduct_msg = ""
     for p in participants:
         user_money[p.id] = user_money.get(p.id, 1000) - bet
-        deduct_msg += f"💸 **{p.name}**님 잔액에서 -{bet:,}원 차감 (남은 잔액: {user_money[p.id]:,}원)\n"
+        deduct_msg += f"💸 **{p.name}**님 잔액에서 -{bet:,}원 차감\n"
         
     await ctx.send(f"🪙 **[룰렛 배팅금 즉시 차감 완료]** 🪙\n{deduct_msg}")
 
-    embed = discord.Embed(title="🎰 멀티 룰렛 돌리는 중...", description="🔮 과연 누구의 항목이 당첨되어 독식할 것인가?! \n\n[ 🪙 🟥 🟨 🟩 🟦 🟪 ]", color=discord.Color.purple())
+    embed = discord.Embed(title="🎰 멀티 룰렛 돌리는 중...", description="🔮 과연 누가 독식할 것인가?! \n\n[ 🪙 🟥 🟨 🟩 🟦 🟪 ]", color=discord.Color.purple())
     msg = await ctx.send(embed=embed)
     
     spin_emojis = ["[ 🟥 🟨 🟩 🟦 🟪 ]", "[ 🟪 🟥 🟨 🟩 🟦 ]", "[ 🟦 🟪 🟥 🟨 🟩 ]"]
-    
-    for i in range(4):
+    for i in range(3):
         await asyncio.sleep(0.6)
         embed.description = f"🔮 과연 결과는?! \n\n{spin_emojis[i % len(spin_emojis)]}"
         await msg.edit(embed=embed)
 
     await asyncio.sleep(0.6)
-    
     winner = random.choice(participants)
-    chosen_item = random.choice(choices)
-    
     user_money[winner.id] = user_money.get(winner.id, 1000) + total_pool
     p_mentions = ", ".join([p.mention for p in participants])
 
     result_embed = discord.Embed(title="🎯 룰렛 배팅 결과 발표", color=discord.Color.green())
-    result_embed.add_field(name="총 베팅 규모", value=f"💵 인당 {bet:,}원 (총 {len(participants)}명 참여) ➡️ 총 상금 **{total_pool:,}원**", inline=False)
-    result_embed.add_field(name="👥 실제 참여자 명단", value=p_mentions, inline=False)
-    result_embed.add_field(name="🎯 당첨된 룰렛 항목", value=f"✨ **{chosen_item}** ✨", inline=True)
-    result_embed.add_field(name="🏆 최종 상금 수령자", value=f"🎉 {winner.mention} 님 전액 획득!", inline=True)
-    result_embed.add_field(name="🏦 승리자 최종 잔액", value=f"{user_money[winner.id]:,}원", inline=False)
+    result_embed.add_field(name="👥 참여자 명단", value=p_mentions, inline=False)
+    result_embed.add_field(name="🏆 최종 승리자", value=f"🎉 {winner.mention} 님 전액 독식!!\n상금 **{total_pool:,}원**을 획득하셨습니다! (최종 잔액: {user_money[winner.id]:,}원)", inline=False)
     
     await msg.edit(content=f"🔔 {winner.mention} 축하합니다! 대박 룰렛의 주인공이 되셨습니다!", embed=result_embed)
+
+# --- ❤️ [신규 미니게임 6] 실시간 중계형 멀티 소개팅 배팅 게임 ---
+@bot.command()
+async def 소개팅(ctx, bet: int = None):
+    if bet is None:
+        return await ctx.send("⚠️ 사용법: `!소개팅 [판돈]`")
+
+    # 참가자 모집 (기존 멀티 배팅방 수집 모듈 연동)
+    participants = await setup_multi_bet_game(ctx, bet, "두근두근 소개팅")
+    if not participants or len(participants) < 1:
+        return await ctx.send("❌ 참여자가 없어 소개팅이 취소되었습니다.")
+
+    total_pool = bet * len(participants)
+    
+    # 판돈 먼저 일괄 차감
+    deduct_msg = ""
+    for p in participants:
+        user_money[p.id] = user_money.get(p.id, 1000) - bet
+        deduct_msg += f"💸 **{p.name}**님 참가비 -{bet:,}원 차감\n"
+    await ctx.send(f"❤️ **[소개팅 참가비가 즉시 차감되었습니다]** ❤️\n{deduct_msg}")
+
+    # 실시간 중계 상황판 임베드 빌드
+    embed = discord.Embed(title="💖 실시간 커플 매칭! 두근두근 소개팅 중계 💖", color=discord.Color.from_rgb(255, 105, 180))
+    p_mentions = ", ".join([p.mention for p in participants])
+    embed.add_field(name="👥 소개팅 참가자", value=p_mentions, inline=False)
+    embed.add_field(name="💬 중계 상황", value="상대방이 소개팅 장소에 도착하여 문을 열고 들어옵니다... 🚪", inline=False)
+    live_msg = await ctx.send(embed=embed)
+
+    await asyncio.sleep(2.5)
+
+    # 소개팅 도중 일어날 수 있는 다양한 상황 대사 목록
+    situations = [
+        "님은 긴장해서 물을 마시다가 상대방 옷에 다 쏟아 호감도가 대폭 하락했습니다! 💦",
+        "님이 약속 장소에 세련되고 멋있는 차를 타고 와서 호감도가 1 상승하였습니다! 🚗",
+        "님이 며칠 안 씻었는지 냄새가 진동을 하여 상대방이 코를 막아 소개팅 실패 위기입니다! 🤢",
+        "님이 식사를 허겁지겁 너무 쩝쩝거리며 먹어 상대방의 표정이 어두워집니다... 🥩",
+        "님의 유머 감각이 완벽 적중! 상대방이 귀엽다며 깔깔 웃어 호감도가 대폭 상승합니다! 🤣",
+        "님이 밥값을 계산할 때 화장실 간 척하며 은근슬쩍 커피도 안 사줘서 소개팅이 실패 쪽으로 기울어집니다! ☕",
+        "님이 화려하고 센스 넘치는 패션 코디로 나타나 첫인상 점수에서 압승을 거둡니다! ✨"
+    ]
+
+    # 참가자가 많든 적든, 스토리를 몇 번 굴려 실시간 상황을 연출
+    loop_count = 3 if len(participants) > 1 else 2
+    for i in range(loop_count):
+        target_user = random.choice(participants)
+        chosen_situation = random.choice(situations)
+        
+        status_text = f"⏳ **[상황 {i+1}]** {target_user.mention}{chosen_situation}"
+        embed.set_field_at(1, name="💬 중계 상황", value=status_text, inline=False)
+        await live_msg.edit(embed=embed)
+        await asyncio.sleep(3.0)
+
+    # 최종 매칭 결과 발표 정산
+    winner = random.choice(participants)
+    user_money[winner.id] = user_money.get(winner.id, 1000) + total_pool
+
+    embed.title = "🎉 소개팅 최종 커플 매칭 완료!"
+    embed.remove_field(1) # 기존 중계상황 필드 제거
+    
+    success_msg = (
+        f"👑 매력 발산에 완벽하게 성공한 **{winner.mention}** 님이 최종 선택을 받았습니다!\n"
+        f"💖 **커플 탄생 성공!** 축하드립니다!\n\n"
+        f"💵 **정산 독식금:** 총 **{total_pool:,}원** 수령 완료!\n"
+        f"🏦 **{winner.name}님의 최종 잔액:** {user_money[winner.id]:,}원"
+    )
+    embed.add_field(name="💕 매칭 결과 발표 💕", value=success_msg, inline=False)
+    await live_msg.edit(embed=embed)
 
 # --- 📅 추가 기능: 출석 체크 시스템 ---
 @bot.command()
@@ -597,52 +644,59 @@ async def 재난지원금(ctx):
     disaster_cooldowns[uid] = now
     await ctx.send(f"🚨 파산 복구 완료! **{ctx.author.name}**님에게 긴급 지원금 **+{reward:,}원**이 지급되었습니다.")
 
-# --- 💸 [신규 기능] 유저 간 실시간 송금 시스템 ---
+# --- 💸 유저 간 실시간 송금 시스템 ---
 @bot.command()
 async def 송금(ctx, receiver: discord.Member, amount: int):
     sender = ctx.author
-    
-    # 1. 자기 자신에게 송금하는 행위 차단
-    if sender.id == receiver.id:
-        return await ctx.send("❌ 자기 자신에게는 송금할 수 없습니다.")
-    
-    # 2. 봇에게 송금하는 행위 차단
-    if receiver.bot:
-        return await ctx.send("❌ 봇에게는 돈을 보낼 수 없습니다.")
+    if sender.id == receiver.id: return await ctx.send("❌ 자기 자신에게는 송금할 수 없습니다.")
+    if receiver.bot: return await ctx.send("❌ 봇에게는 돈을 보낼 수 없습니다.")
+    if amount <= 0: return await ctx.send("⚠️ 송금 금액은 최소 1원 이상이어야 합니다.")
         
-    # 3. 송금 금액 유효성 체크 (0원 이하 버그 차단)
-    if amount <= 0:
-        return await ctx.send("⚠️ 송금 금액은 최소 1원 이상이어야 합니다.")
-        
-    # 4. 보낸 사람의 보유 잔액 체크
     sender_money = user_money.get(sender.id, 1000)
     if sender_money < amount:
         return await ctx.send(f"❌ 잔액이 부족합니다. (현재 보유 잔액: `{sender_money:,}원`)")
         
-    # 5. [실시간 동기화] 즉시 메모리 데이터 차감 및 합산 연산 수행
     user_money[sender.id] = sender_money - amount
     user_money[receiver.id] = user_money.get(receiver.id, 1000) + amount
-    
-    # 랭킹 갱신용 유저 이름 캐싱 강제화
     user_names[sender.id] = sender.name
     user_names[receiver.id] = receiver.name
     
-    # 변수 고정으로 연동 지연 원천 차단
-    sender_final = user_money[sender.id]
-    receiver_final = user_money[receiver.id]
-    
-    # 6. 실시간 정산 임베드 메시지 출력
     embed = discord.Embed(title="💸 송금 완료 (실시간 정산)", color=discord.Color.teal())
     embed.description = (
         f"👥 **보낸 사람:** {sender.mention}\n"
         f"🙋‍♂️ **받는 사람:** {receiver.mention}\n"
         f"💰 **송금된 금액:** `{amount:,}원`"
     )
-    embed.add_field(name=f"📉 {sender.name}님의 남은 잔액", value=f"`{sender_final:,}원`", inline=True)
-    embed.add_field(name=f"📈 {receiver.name}님의 최종 잔액", value=f"`{receiver_final:,}원`", inline=True)
+    embed.add_field(name=f"📉 {sender.name}님의 남은 잔액", value=f"`{user_money[sender.id]:,}원`", inline=True)
+    embed.add_field(name=f"📈 {receiver.name}님의 최종 잔액", value=f"`{user_money[receiver.id]:,}원`", inline=True)
     embed.set_footer(text="시스템 메모리에 즉시 반영되었습니다.")
-    
     await ctx.send(embed=embed)
+
+# --- 📢 세련된 임베드 공지사항 알림 시스템 ---
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 공지(ctx, *, args: str = None):
+    if not args or "|" not in args:
+        return await ctx.send("⚠️ 사용법: `!공지 [제목] | [내용]` 형식을 맞춰 입력해 주세요. (중간에 세로 바 `|` 필수)")
+
+    try: await ctx.message.delete()
+    except: pass
+
+    parts = args.split("|", 1)
+    title_text = parts[0].strip()
+    content_text = parts[1].strip()
+
+    embed = discord.Embed(
+        title=f"📢 {title_text}",
+        description=content_text,
+        color=discord.Color.from_rgb(255, 65, 105),
+        timestamp=datetime.datetime.now()
+    )
+    
+    avatar_url = ctx.author.display_avatar.url
+    embed.set_author(name=f"작성자: {ctx.author.name}", icon_url=avatar_url)
+    embed.set_footer(text="공지사항을 확인해 주시기 바랍니다.")
+    await ctx.send(content="@everyone", embed=embed)
 
 # --- 🏆 통합 랭킹 시스템 ---
 @bot.command()
@@ -724,10 +778,9 @@ async def 입금(ctx, m: discord.Member, a: int):
     current_money = user_money.get(m.id, 1000)
     user_money[m.id] = current_money + a
     user_names[m.id] = m.name
-    updated_money = user_money[m.id]
     
     embed = discord.Embed(title="💵 관리자 자산 관리 [입금]", color=discord.Color.blue())
-    embed.description = f"🏦 대상자: {m.mention}\n💰 충전된 금액: `+{a:,}원`\n📊 최종 보유 자산: `{updated_money:,}원`"
+    embed.description = f"🏦 대상자: {m.mention}\n💰 충전된 금액: `+{a:,}원`\n📊 최종 보유 자산: `{user_money[m.id]:,}원`"
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
     await ctx.send(embed=embed)
 
@@ -738,10 +791,9 @@ async def 회수(ctx, m: discord.Member, a: int):
     current_money = user_money.get(m.id, 1000)
     user_money[m.id] = current_money - a
     user_names[m.id] = m.name
-    updated_money = user_money[m.id]
     
     embed = discord.Embed(title="🛑 관리자 자산 관리 [회수]", color=discord.Color.red())
-    embed.description = f"🏦 대상자: {m.mention}\n📉 차감된 금액: `-{a:,}원`\n📊 최종 보유 자산: `{updated_money:,}원`"
+    embed.description = f"🏦 대상자: {m.mention}\n📉 차감된 금액: `-{a:,}원`\n📊 최종 보유 자산: `{user_money[m.id]:,}원`"
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
     await ctx.send(embed=embed)
 
