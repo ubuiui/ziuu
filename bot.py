@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from flask import Flask
 from threading import Thread
 import urllib.request
+import urllib.parse
 import urllib.error
 
 intents = discord.Intents.all()
@@ -12,18 +13,27 @@ user_money = {}
 game_states = {}
 
 # --- [설정 공간] ---
-YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  # ⚠️ 본인의 유튜브 라이브 주소 정확히 입력
-NOTICE_CHANNEL_ID = 1520830878513762375  # ⚠️ 디스코드 채널 ID 입력 (따옴표 없이 숫자만!)
+# 한글 주소 처리를 위해 원본 주소를 안전하게 인코딩하도록 자동 처리해두었습니다.
+ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
+# ⚠️ 주의: 채널 ID가 올바른지 디스코드 개발자 모드에서 꼭 다시 확인해 보세요! (보통 18자리 숫자입니다)
+NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
+
+# 한글 주소 안전 인코딩 변환
+try:
+    parsed_url = urllib.parse.urlparse(ORIGINAL_YOUTUBE_URL)
+    encoded_path = urllib.parse.quote(parsed_url.path)
+    YOUTUBE_CHANNEL_URL = urllib.parse.urlunparse((parsed_url.scheme, parsed_url.netloc, encoded_path, parsed_url.params, parsed_url.query, parsed_url.fragment))
+except Exception:
+    YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 (Render 포트 충돌 방지 튜닝)
+# 웹 서버 (Render 24시간 가동 및 포트 충돌 원천 차단)
 app = Flask('')
 @app.route('/')
-def home(): return "봇이 살아있어요!"
+def home(): return "봇이 완벽하게 살아있습니다!"
 
 def run_flask():
-    # Render가 주는 포트를 자동으로 찾아서 실행 (없으면 10000번)
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -154,19 +164,22 @@ class NextGameView(discord.ui.View):
 
     @discord.ui.button(label="1️⃣ 동일 배팅 진행", style=discord.Style.success)
     async def re_same(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.message.delete()
+        try: await interaction.message.delete()
+        except: pass
         self.stop()
         await play_blackjack(self.ctx, self.current_bet)
 
     @discord.ui.button(label="2️⃣ 2배 배팅 진행", style=discord.Style.primary)
     async def re_double(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.message.delete()
+        try: await interaction.message.delete()
+        except: pass
         self.stop()
         await play_blackjack(self.ctx, self.current_bet * 2)
 
     @discord.ui.button(label="3️⃣ 게임 종료", style=discord.Style.danger)
     async def stop_game(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.message.delete()
+        try: await interaction.message.delete()
+        except: pass
         self.stop()
         await self.ctx.send("👋 게임을 종료합니다.")
 
@@ -214,7 +227,7 @@ async def check_youtube_live():
     
     def fetch_html():
         try:
-            req = urllib.request.Request(YOUTUBE_CHANNEL_URL, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(YOUTUBE_CHANNEL_URL, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 return response.read().decode('utf-8')
         except: return ""
@@ -226,10 +239,13 @@ async def check_youtube_live():
         is_live = '\"isLive\":true' in html or 'liveStreamability' in html
         if is_live and not IS_LIVE_NOW:
             IS_LIVE_NOW = True
-            channel = bot.get_channel(NOTICE_CHANNEL_ID)
-            if channel:
-                embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({YOUTUBE_CHANNEL_URL})", color=discord.Color.red())
-                await channel.send(embed=embed)
+            try:
+                channel = bot.get_channel(NOTICE_CHANNEL_ID)
+                if channel:
+                    embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({ORIGINAL_YOUTUBE_URL})", color=discord.Color.red())
+                    await channel.send(embed=embed)
+            except Exception as e:
+                print(f"알림 채널 전송 오류 (채널 ID 확인 필요): {e}")
         elif not is_live:
             IS_LIVE_NOW = False
 
@@ -283,5 +299,4 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# Render 환경변수에 토큰을 저장했으면 아래 코드가 안전하게 읽어옵니다.
 bot.run(os.environ.get('BOT_TOKEN'))
