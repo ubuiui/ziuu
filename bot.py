@@ -15,7 +15,12 @@ except ImportError:
 
 from discord.ext import commands, tasks
 
-intents = discord.Intents.all()
+# 🚨 [중요] Render 빌드 에러 및 채팅 인식 문제를 방지하기 위해 인텐트를 명시적으로 선언합니다.
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.presences = True
+
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 user_money = {}
@@ -27,7 +32,7 @@ NOTICE_CHANNEL_ID = 1520830878513762375
 IS_LIVE_NOW = False 
 # --------------------
 
-# 웹 서버 (Render 포트 감지 무조건 통과용)
+# 웹 서버 (Render 포트 감지 바인딩 에러 프리패스용)
 app = Flask('')
 @app.route('/')
 def home(): 
@@ -61,7 +66,7 @@ async def ask_next_game(ctx, current_bet):
     if final_money < 1000:
         return await ctx.send("❌ 잔액이 부족(1000원 미만)하여 게임을 종료합니다.")
         
-    guide_msg = await ctx.send(
+    await ctx.send(
         f"🔄 **다음 게임을 선택하세요!** [현재 자산: {final_money}원]\n"
         f"💬 채팅창에 번호를 입력하세요 (제한시간 30초):\n"
         f"**1** : 동일 배팅 진행 ({current_bet}원)\n"
@@ -108,7 +113,6 @@ async def play_blackjack(ctx, bet):
         await ask_next_game(ctx, bet)
         return
 
-    # 채팅 입력 대기 루프
     def check_action(m):
         if m.author.id != uid or m.channel.id != ctx.channel.id:
             return False
@@ -120,11 +124,9 @@ async def play_blackjack(ctx, bet):
             action_msg = await bot.wait_for('message', check=check_action, timeout=60.0)
             user_input = action_msg.content.strip().lower()
             
-            # 유저의 메시지 삭제 시도 (채팅창 깔끔하게 유지)
             try: await action_msg.delete()
             except: pass
 
-            # 1) 히트 (ㅎ)
             if user_input in ['ㅎ', 'ㅎㅌ', '히트', 'hit']:
                 data['p'].append(data['deck'].pop())
                 if get_score(data['d']) < 17 and get_score(data['p']) <= 21:
@@ -138,7 +140,6 @@ async def play_blackjack(ctx, bet):
                 else:
                     await main_msg.edit(embed=create_embed(uid, data, "진행 중 (히트함)"))
 
-            # 2) 스테이 (ㅅ)
             elif user_input in ['ㅅ', 'ㅅㅌ', '스테이', 'stay']:
                 while get_score(data['d']) < 17:
                     data['d'].append(data['deck'].pop())
@@ -153,7 +154,6 @@ async def play_blackjack(ctx, bet):
                 await ask_next_game(ctx, data['bet'])
                 return
 
-            # 3) 더블 (ㄷ)
             elif user_input in ['ㄷ', 'ㄷㅂ', '더블', 'double']:
                 if (data['bet'] * 2) > user_money.get(uid, 1000):
                     await ctx.send("⚠️ 잔액이 부족하여 더블다운이 불가능합니다.", delete_after=3)
@@ -177,7 +177,6 @@ async def play_blackjack(ctx, bet):
                 await ask_next_game(ctx, data['bet'])
                 return
 
-            # 4) 포기 (ㅍ)
             elif user_input in ['ㅍ', 'ㅍㄱ', '포기', 'surrender']:
                 user_money[uid] = user_money.get(uid, 1000) - (data['bet'] // 2)
                 await main_msg.edit(embed=create_embed(uid, data, "🏳️ 포기함 (절반 회수)", is_final=True))
@@ -280,4 +279,64 @@ async def 입금(ctx, m: discord.Member, a: int):
     try: await ctx.message.delete()
     except: pass
     user_money[m.id] = user_money.get(m.id, 1000) + a
-    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    embed = discord.Embed(title="💵 자산 지급 완료", color=discord.Color.green())
+    embed.description = f"관리자 **{ctx.author.name}**님이 유저 **{m.name}**에게 **{a}원**을 지급하였습니다."
+    embed.add_field(name="지급 후 총 금액", value=f"💰 {user_money[m.id]}원", inline=False)
+    embed.set_footer(text=f"일시: {now_str}")
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 회수(ctx, m: discord.Member, a: int):
+    try: await ctx.message.delete()
+    except: pass
+    user_money[m.id] = user_money.get(m.id, 1000) - a
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    embed = discord.Embed(title="🛑 자산 회수 완료", color=discord.Color.red())
+    embed.description = f"관리자 **{ctx.author.name}**님이 유저 **{m.name}**에게서 **{a}원**을 회수하였습니다."
+    embed.add_field(name="회수 후 총 금액", value=f"💰 {user_money[m.id]}원", inline=False)
+    embed.set_footer(text=f"일시: {now_str}")
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 공지(ctx, ch: discord.TextChannel, *, t):
+    embed = discord.Embed(title="📢 [공지사항]", description=t, color=discord.Color.blue(), timestamp=datetime.datetime.now())
+    await ch.send(embed=embed)
+    await ctx.send("✅ 공지 임베드 전송 완료", delete_after=3)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
+
+
+# 🚀 [이중 예외 방어형 메인 비동기 구동 엔진]
+async def main():
+    token = os.environ.get('BOT_TOKEN')
+    
+    if not token or len(token.strip()) < 10:
+        print("\n❌ [안내] 'BOT_TOKEN'이 비어있습니다. Render 먹통 방지를 위해 상시 생존 모드를 유지합니다...")
+        while True:
+            await asyncio.sleep(3600)
+
+    try:
+        async with bot:
+            await bot.start(token)
+    except Exception as e:
+        print(f"\n❌ [구동 실패 비상 제어 시스템 가동] 오류 로그: {e}")
+        print("토큰 값 혹은 네트워크 문제로 디스코드 서버와의 연결이 차단되었습니다.")
+        print("대시보드 먹통 현상을 막기 위해 프로세스를 강제 대기 상태로 유지합니다.\n")
+        while True:
+            await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    from threading import Thread
+    port = int(os.environ.get("PORT", 10000))
+    print(f"📡 Render 전용 포트 감지 웹 서버 선행 기동 완료: {port}")
+    
+    server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
+    server_thread.daemon = True
+    server_thread.start()
+
+    asyncio.run(main())
