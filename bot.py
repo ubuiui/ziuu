@@ -13,13 +13,13 @@ user_money = {}
 game_states = {}
 
 # --- [설정 공간] ---
-# 한글 주소 처리를 위해 원본 주소를 안전하게 인코딩하도록 자동 처리해두었습니다.
-ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
-# ⚠️ 주의: 채널 ID가 올바른지 디스코드 개발자 모드에서 꼭 다시 확인해 보세요! (보통 18자리 숫자입니다)
-NOTICE_CHANNEL_ID = 1520830878513762375  
+ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데/live"  
+
+# ⚠️ 보내주신 ID를 문자열 형태로 안전하게 저장합니다. (파이썬 숫자 깨짐 방지)
+NOTICE_CHANNEL_ID = "1520830878513762375"  
 IS_LIVE_NOW = False 
 
-# 한글 주소 안전 인코딩 변환
+# 한글 유튜브 주소 안전 인코딩 변환 (Render 크래시 방지)
 try:
     parsed_url = urllib.parse.urlparse(ORIGINAL_YOUTUBE_URL)
     encoded_path = urllib.parse.quote(parsed_url.path)
@@ -28,10 +28,10 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 (Render 24시간 가동 및 포트 충돌 원천 차단)
+# 웹 서버 (Render 24시간 가동 및 포트 충돌 방지)
 app = Flask('')
 @app.route('/')
-def home(): return "봇이 완벽하게 살아있습니다!"
+def home(): return "봇이 완벽하게 가동 중입니다!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -222,7 +222,7 @@ async def play_blackjack(ctx, bet):
 @tasks.loop(minutes=5)
 async def check_youtube_live():
     global IS_LIVE_NOW
-    if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or NOTICE_CHANNEL_ID == 0: 
+    if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: 
         return
     
     def fetch_html():
@@ -240,12 +240,13 @@ async def check_youtube_live():
         if is_live and not IS_LIVE_NOW:
             IS_LIVE_NOW = True
             try:
-                channel = bot.get_channel(NOTICE_CHANNEL_ID)
+                # 문자열 ID를 숫자로 변환하여 안전하게 전송
+                channel = bot.get_channel(int(NOTICE_CHANNEL_ID))
                 if channel:
                     embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({ORIGINAL_YOUTUBE_URL})", color=discord.Color.red())
                     await channel.send(embed=embed)
             except Exception as e:
-                print(f"알림 채널 전송 오류 (채널 ID 확인 필요): {e}")
+                print(f"알림 채널 전송 실패: {e}")
         elif not is_live:
             IS_LIVE_NOW = False
 
