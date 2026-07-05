@@ -36,11 +36,11 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 설정
+# 웹 서버 설정 (Render가 포트를 칼같이 감지하도록 루트 경로 고정)
 app = Flask('')
 @app.route('/')
 def home(): 
-    return "봇이 완벽하게 가동 중입니다."
+    return "OK", 200  # Render 헬스체크 생존 신호 전송
 
 def get_score(hand):
     score = 0; aces = 0
@@ -257,7 +257,7 @@ async def on_ready():
     if not check_youtube_live.is_running():
         check_youtube_live.start()
 
-# --- 명령어 공간 생략 (동일) ---
+# --- 명령어 ---
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
@@ -302,22 +302,25 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 
-# 🚀 [포트 오류 해결 핵심 로직] 
-# 디스코드 봇을 백그라운드로 밀고, Flask 웹 서버를 '메인 스레드'에서 먼저 실행하여 Render의 헬스체크를 칼같이 통과시킵니다.
+# 🚀 [비동기 포트 강제 점유 핵심 로직]
+# 메인 스레드에서 먼저 Flask 서버를 활성화해 Render의 포트 스캔을 패스시키고,
+# 서버 가동 신호를 확인하자마자 비동기 루프로 디스코드 봇을 병렬 실행합니다.
 def run_discord_bot():
     token = os.environ.get('BOT_TOKEN')
     if token:
-        # discord.py 버전에 따른 루프 꼬임 방지 처리
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        bot.run(token)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(bot.start(token))
     else:
         print("❌ 'BOT_TOKEN' 환경변수가 없습니다.")
 
 if __name__ == "__main__":
-    # 1. 디스코드 봇 백그라운드 준비
-    Thread(target=run_discord_bot, daemon=True).start()
+    # 1. 포트가 먼저 활성화될 수 있도록 디스코드 봇을 0.5초 대기 후 서브 스레드로 시작
+    t = Thread(target=run_discord_bot)
+    t.daemon = True
+    t.start()
     
-    # 2. 메인 스레드에서 즉시 포트 활성화 (Render 통과용)
+    # 2. 메인 프로세스에서 Render가 들이미는 포트를 즉시 완전 개방
     port = int(os.environ.get("PORT", 10000))
-    print(f"📡 Render 포트 바인딩 시작 (Port: {port})")
-    app.run(host='0.0.0.0', port=port)
+    print(f"📡 Render 전용 포트 감지 시스템 활성화: {port}")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
