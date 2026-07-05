@@ -255,13 +255,27 @@ async def 경주(ctx, bet: int = 1000):
         res_embed.add_field(name="🎉 축하합니다!", value=f"선택하신 **{user_pick}**가 1등을 했습니다!\n**+{win_money}원** 획득! (현재 잔액: {user_money[uid]}원)")
     else:
         user_money[uid] = user_money.get(uid, 1000) - bet
-        res_embed.add_field(name="❌ 아쉽습니다", value=f"우승마는 **{winner}**였습니다. (선택: {user_pick})\n**-{bet}원** 차감 (현재 잔액: {user_money[uid]}원)")
+        res_embed.add_field(name="❌ 아쉽습니다", value=f"승리한 예빈이는 **{winner}**였습니다. (선택: {user_pick})\n**-{bet}원** 차감 (현재 잔액: {user_money[uid]}원)")
     await ctx.send(embed=res_embed)
 
 # --- ⚡ 미니게임 2: 순발력 타자 게임 ---
 @bot.command()
 async def 타자(ctx):
-    sentences = ["간장공장공장장은강공장장이고", "경찰청창살외창살은쌍창살이고", "내가그린기린그림은긴기린그림이고", "RenderServer2026", "민지유최고의스트리머", "블랙잭대박기원", "상호작용실패없는최강봇"]
+    # 지정해주신 단어들로 커스텀 조합한 35가지 고유 문장 풀
+    sentences = [
+        "이루카와우뱅의환상적인콜라보레이션", "예원이가유튜브에지유를검색했을때", "피브와예빈이의끝없는유튜브대결", 
+        "헬프미를외치는명철이와지유방장님", "만상박장의레전드토크쇼에오신것을환영합니다", "찬우아들이헤응하고울었다는게학계의정설",
+        "이루카명철만상박장최강의멤버들", "우뱅이가헬프를외치며예빈이에게달려감", "예원이와피브의지유방송지키기프로젝트",
+        "유튜브알고리즘이선택한지유와예빈", "명철아헤응이가부르는데빨리일어나라", "만상이와박장의찬우아들돌보기대작전",
+        "이루카피브예원유튜브트리오결성", "우뱅이가지유의헬프요청을승인했습니다", "예빈명철만상박장찬우아들헤응",
+        "지유는오늘도유튜브에서빛이너지유", "헤응이의매력에빠져버린이루카와우뱅", "예원이피브헬프치고빨리탈출해",
+        "명철이의만상일기속박장의존재감", "찬우아들이추천하는지유와예빈유튜브", "이루카우뱅예원피브예빈유튜브지유",
+        "헬프명철만상박장찬우아들헤응이까지", "지유와예빈이의유튜브구독과좋아요", "이루카의우뱅이구출작전헬프미",
+        "예원이와피브는명철이의찐팬이래", "만상박장의찬우아들바라기헤응헤응", "지유유튜브구독안하면명철이가출동",
+        "예빈피브이루카우뱅의블랙잭대탕진", "헬프요청한박장이와만상이의대탈출", "찬우아들예원이와지유의해피타임",
+        "헤응이라고말해버린명철이의최후", "이루카우뱅의유튜브정복기커밍순", "예빈이가지유에게헬프를외친이유",
+        "피브와예원의만상박장대백과사전", "찬우아들명철이가헤응하고지유를보네"
+    ]
     target = random.choice(sentences)
     
     embed = discord.Embed(title="⚡ 순발력 타자 게임! ⚡", color=discord.Color.purple())
@@ -335,19 +349,17 @@ async def 출석(ctx):
     if user_att["last_date"] == today_str:
         return await ctx.send(f"⚠️ {ctx.author.name}님, 오늘은 이미 출석체크를 완료하셨습니다! 내일 다시 와주세요. 📆")
         
-    # 연속 출석 판정 (어제 날짜 체크)
     yesterday_str = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     if user_att["last_date"] == yesterday_str:
         user_att["streak"] += 1
     else:
-        user_att["streak"] = 1 # 끊겼으면 1일차부터 다시 시작
+        user_att["streak"] = 1
         
     user_att["total"] += 1
     user_att["last_date"] = today_str
     
-    # 보상 계산 (기본 1000원 + 연속 출석 보너스)
     base_reward = 1000
-    bonus = min(user_att["streak"] * 100, 1000) # 연속 보너스는 하루 최대 1000원까지 제한
+    bonus = min(user_att["streak"] * 100, 1000)
     total_reward = base_reward + bonus
     
     user_money[uid] = user_money.get(uid, 1000) + total_reward
@@ -363,9 +375,7 @@ async def 출석(ctx):
 # --- 🏆 추가 기능 5: 통합 랭킹 시스템 ---
 @bot.command()
 async def 랭킹(ctx):
-    # 자산 랭킹 상위 5명
     sorted_money = sorted(user_money.items(), key=lambda x: x[1], reverse=True)[:5]
-    # 출석 랭킹 상위 5명
     sorted_att = sorted(attendance_data.items(), key=lambda x: x[1]["total"], reverse=True)[:5]
     
     embed = discord.Embed(title="🏆 우리 서버 통합 랭킹 판 🏆", color=discord.Color.gold())
@@ -450,7 +460,27 @@ async def 룰렛(ctx, *, args: str = None):
     result_embed = discord.Embed(title="🎯 룰렛 결과 발표", color=discord.Color.green())
     result_embed.add_field(name="전체 후보 리스트", value=", ".join(choices), inline=False)
     result_embed.add_field(name="🏆 최종 당첨 항목", value=f"✨ **{chosen}** ✨", inline=False)
-    await msg.edit(embed=result_embed)
+    await msg.edit(result_embed)
+
+# 🔧 [관리자 권한] 유저의 출석 일수 수정용 보정 명령어
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 출석수정(ctx, m: discord.Member, streak: int, total: int):
+    try: await ctx.message.delete()
+    except: pass
+    
+    if m.id not in attendance_data:
+        attendance_data[m.id] = {"streak": 0, "total": 0, "last_date": ""}
+        
+    attendance_data[m.id]["streak"] = streak
+    attendance_data[m.id]["total"] = total
+    user_names[m.id] = m.name
+    
+    embed = discord.Embed(title="🔧 출석 데이터 수동 보정 완료", color=discord.Color.orange())
+    embed.description = f"관리자 **{ctx.author.name}**님이 유저 **{m.name}**님의 출석 데이터를 수정했습니다."
+    embed.add_field(name="수정 후 연속 출석", value=f"🔥 {streak}일", inline=True)
+    embed.add_field(name="수정 후 누적 출석", value=f"📊 {total}일", inline=True)
+    await ctx.send(embed=embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
