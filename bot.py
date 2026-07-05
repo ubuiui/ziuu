@@ -22,19 +22,12 @@ user_money = {}
 game_states = {}
 
 # --- [설정 공간] ---
-ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
 NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
-
-try:
-    parsed_url = urllib.parse.urlparse(ORIGINAL_YOUTUBE_URL)
-    encoded_path = urllib.parse.quote(parsed_url.path)
-    YOUTUBE_CHANNEL_URL = urllib.parse.urlunparse((parsed_url.scheme, parsed_url.netloc, encoded_path, parsed_url.params, parsed_url.query, parsed_url.fragment))
-except Exception:
-    YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 설정 (Render가 포트를 스캔할 때 100% 생존 신호를 주도록 최우선 구동)
+# 웹 서버 (Render 포트 감지 통과용)
 app = Flask('')
 @app.route('/')
 def home(): 
@@ -149,6 +142,7 @@ class BlackjackGameView(discord.ui.View):
         self.stop()
         await ask_next_game(self.ctx, self.data['bet'])
 
+# --- 다음 게임 진행 버튼 인터페이스 ---
 class NextGameView(discord.ui.View):
     def __init__(self, ctx, uid, current_bet):
         super().__init__(timeout=30.0)
@@ -242,7 +236,7 @@ async def check_youtube_live():
             try:
                 channel = bot.get_channel(int(NOTICE_CHANNEL_ID))
                 if channel:
-                    embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({ORIGINAL_YOUTUBE_URL})", color=discord.Color.red())
+                    embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({YOUTUBE_CHANNEL_URL})", color=discord.Color.red())
                     await channel.send(embed=embed)
             except Exception as e:
                 print(f"알림 채널 전송 실패: {e}")
@@ -251,11 +245,11 @@ async def check_youtube_live():
 
 @bot.event
 async def on_ready():
-    print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
+    print(f"✅ Logged in as {bot.user.name}")
     if not check_youtube_live.is_running():
         check_youtube_live.start()
 
-# --- 명령어 공간 ---
+# --- 명령어 ---
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
@@ -300,16 +294,14 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 
-# 🚀 [Render 특화 - 비동기 메인 이벤트 엔진]
+# 🚀 [Render 맞춤형 - 단일 비동기 메인 실행 엔진]
 async def main():
     token = os.environ.get('BOT_TOKEN')
     
-    # [치명적 오류 원천 진단] 만약 토큰 값이 비어있다면 에러를 직관적으로 출력하고 뻗지 않도록 무한 대기
-    if not token or len(token).strip() < 10:
-        print("\n❌ [🚨 환경변수 설정 오류 경고] 🚨")
-        print("Render 대시보드의 'Environment' 메뉴에서 'BOT_TOKEN' 키(Key)와 봇 토큰 값(Value)이 제대로 저장되어 있는지 반드시 수동으로 확인하세요!")
-        print("토큰 값이 공백이거나 잘못 전달되어 디스코드 봇을 시작할 수 없습니다.\n")
-        # Render가 포트 오류 대신 토큰 미기입 로그를 남기도록 Flask 서버만 유지
+    # 만약 환경변수 토큰이 잘못 지정되었다면, 뻗지 않고 안내 로그를 남기도록 조치
+    if not token or len(token.strip()) < 10:
+        print("\n❌ [환경변수 등록 오류 알림]")
+        print("Render 대시보드의 Environment 메뉴에 'BOT_TOKEN' 값이 정확히 들어가 있는지 확인하세요.\n")
         while True:
             await asyncio.sleep(3600)
 
@@ -317,17 +309,14 @@ async def main():
         await bot.start(token)
 
 if __name__ == "__main__":
-    # 포트를 점유할 웹 서버를 백그라운드 스레드로 즉시 전개 (Render 무조건 패스용)
+    # 포트를 점유할 웹 서버를 백그라운드 스레드로 격리하여 선행 가동 (Render 패스용 핵심)
     from threading import Thread
     port = int(os.environ.get("PORT", 10000))
-    print(f"📡 Render 전용 포트 감지 시스템 선행 활성화: {port}")
+    print(f"📡 Render 전용 포트 감지 시스템 가동: {port}")
     
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
     server_thread.start()
 
-    # 메인 비동기 루프 가동
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print(f"❌ 가동 중 예상치 못한 치명적 오류 발생: {e}")
+    # 메인 비동기 루프로 디스코드 봇 진입
+    asyncio.run(main())
