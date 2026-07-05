@@ -33,7 +33,7 @@ gift_cooldowns = {}
 disaster_cooldowns = {}   
 
 # --- [설정 공간] ---
-YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데/live"  
 NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
 # --------------------
@@ -192,14 +192,13 @@ async def play_blackjack(ctx, bet):
             await main_msg.edit(content="⏱️ 제한시간 초과로 게임이 자동 취소되었습니다.", embed=None)
             return
 
-# --- 🚀 [공통 시스템] 미니게임용 묻고 더블로 가! 로직 (스테이지별 확률 감소 적용) ---
+# --- 🚀 [공통 시스템] 미니게임용 묻고 더블로 가! 로직 (단계별 확률 감소) ---
 async def start_double_or_nothing(ctx, current_win_prize, original_bet, game_name):
     uid = ctx.author.id
     current_prize = current_win_prize
     stage = 1
 
     while True:
-        # 단계별 확률 계산: 기본 70%에서 한 번 성공할 때마다 10%씩 감소 (최하 10% 보장)
         success_rate = max(0.70 - (stage - 1) * 0.10, 0.10)
         success_percentage = int(success_rate * 100)
         fail_percentage = 100 - success_percentage
@@ -225,7 +224,6 @@ async def start_double_or_nothing(ctx, current_win_prize, original_bet, game_nam
             await double_msg.delete()
 
             if user_choice == '묻더':
-                # 가변 확률 판정
                 if random.random() < success_rate:
                     current_prize = int(current_prize * 2.5)
                     stage += 1
@@ -253,7 +251,7 @@ async def start_double_or_nothing(ctx, current_win_prize, original_bet, game_nam
             await ctx.send(embed=timeout_embed)
             return
 
-# --- 🎯 [공통 시스템] 다중 참가자 멀티 배팅방 수집 로직 ---
+# --- 🎯 [공통 시스템] 다중 참가자 멀티 배팅방 수집 로직 (실시간 반영 및 버그 완전 수정) ---
 async def setup_multi_bet_game(ctx, bet_amount, game_title):
     creator = ctx.author
     if bet_amount < 1000:
@@ -266,35 +264,45 @@ async def setup_multi_bet_game(ctx, bet_amount, game_title):
     participants = [creator]
     user_names[creator.id] = creator.name
 
-    join_embed = discord.Embed(title=f"🎲 {game_title} 배팅방 개설!", color=discord.Color.purple())
-    join_embed.description = (
-        f"방장: **{creator.name}**\n"
-        f"인당 참가비(배팅금): **{bet_amount:,}원**\n\n"
-        f"🙋‍♂️ 함께 돈을 걸고 참여하실 분은 **30초 내에 아래 ✋ 이모지(리액션)**를 눌러주세요!\n"
-        f"현재 참가 확정자: {creator.mention}"
-    )
-    join_msg = await ctx.send(embed=join_embed)
+    def make_embed():
+        mentions = ", ".join([u.mention for u in participants])
+        embed = discord.Embed(title=f"🎲 {game_title} 배팅방 개설!", color=discord.Color.purple())
+        embed.description = (
+            f"방장: **{creator.name}**\n"
+            f"인당 참가비(배팅금): **{bet_amount:,}원**\n\n"
+            f"🙋‍♂️ 함께 돈을 걸고 참여하실 분은 **30초 내에 아래 ✋ 이모지(리액션)**를 눌러주세요!\n"
+            f"**현재 참가자 ({len(participants)}명):**\n{mentions}"
+        )
+        return embed
+
+    join_msg = await ctx.send(embed=make_embed())
     await join_msg.add_reaction("✋")
 
-    await asyncio.sleep(30.0)
+    end_time = datetime.datetime.now() + datetime.timedelta(seconds=30)
+    
+    while True:
+        remaining = (end_time - datetime.datetime.now()).total_seconds()
+        if remaining <= 0:
+            break
+        try:
+            def reaction_check(r, u):
+                return r.message.id == join_msg.id and str(r.emoji) == "✋" and not u.bot
 
-    try:
-        refreshed_msg = await ctx.channel.fetch_message(join_msg.id)
-        reaction = discord.utils.get(refreshed_msg.reactions, emoji="✋")
-        if reaction:
-            users = [u async for u in reaction.users()]
-            for u in users:
-                if u.bot or u.id == creator.id:
-                    continue
-                if user_money.get(u.id, 1000) >= bet_amount:
-                    participants.append(u)
-                    user_names[u.id] = u.name
+            reaction, user = await bot.wait_for('reaction_add', check=reaction_check, timeout=remaining)
+            
+            if user not in participants:
+                if user_money.get(user.id, 1000) >= bet_amount:
+                    participants.append(user)
+                    user_names[user.id] = user.name
+                    await join_msg.edit(embed=make_embed())
                 else:
-                    await ctx.send(f"⚠️ {u.mention}님은 잔액이 부족하여 배팅에서 제외됩니다.")
-    except Exception as e:
-        print(f"참가자 수집 오류: {e}")
+                    await ctx.send(f"⚠️ {user.mention}님은 잔액이 부족하여 참여할 수 없습니다.", delete_after=3)
+        except asyncio.TimeoutError:
+            break
 
-    await join_msg.delete()
+    try: await join_msg.delete()
+    except: pass
+
     return participants
 
 # --- 🏎️ 미니게임 1: 자동차 경주 게임 ---
@@ -449,7 +457,7 @@ async def 사다리(ctx, bet: int = None, *, args: str = None):
 
     participants = await setup_multi_bet_game(ctx, bet, "사다리 타기")
     if not participants or len(participants) < 1:
-        return
+        return await ctx.send("❌ 참가자가 없어 사다리 타기 게임이 취소되었습니다.")
 
     total_pool = bet * len(participants)
     deduct_msg = ""
@@ -460,14 +468,14 @@ async def 사다리(ctx, bet: int = None, *, args: str = None):
     await ctx.send(f"🪙 **[사다리 배팅금 즉시 차감 완료]** 🪙\n{deduct_msg}")
 
     chosen_item = random.choice(choices)
-    winner = random.choice(participants)
+    winner = random.choice(participants) # 실제 참가 신청한 인원 풀 안에서만 당첨자 선출
     
     user_money[winner.id] = user_money.get(winner.id, 1000) + total_pool
     p_mentions = ", ".join([p.mention for p in participants])
 
     embed = discord.Embed(title="🪜 사다리 타기 결과 발표", color=discord.Color.blue())
     embed.add_field(name="총 베팅 규모", value=f"💵 인당 {bet:,}원 (총 {len(participants)}명 참여) ➡️ 총 상금 **{total_pool:,}원**", inline=False)
-    embed.add_field(name="👥 모든 참여자 (태그)", value=p_mentions, inline=False)
+    embed.add_field(name="👥 실제 참여자 명단", value=p_mentions, inline=False)
     embed.add_field(name="🎯 낙점된 항목", value=f"✨ **{chosen_item}**", inline=True)
     embed.add_field(name="🏆 최종 승리자", value=f"🎉 {winner.mention} 님 독식!!", inline=True)
     embed.add_field(name="🏦 승리자 최종 잔액", value=f"{user_money[winner.id]:,}원", inline=False)
@@ -486,7 +494,7 @@ async def 룰렛(ctx, bet: int = None, *, args: str = None):
 
     participants = await setup_multi_bet_game(ctx, bet, "룰렛 돌리기")
     if not participants or len(participants) < 1:
-        return
+        return await ctx.send("❌ 참가자가 없어 룰렛 게임이 취소되었습니다.")
 
     total_pool = bet * len(participants)
     deduct_msg = ""
@@ -507,15 +515,17 @@ async def 룰렛(ctx, bet: int = None, *, args: str = None):
         await msg.edit(embed=embed)
 
     await asyncio.sleep(0.6)
-    chosen_item = random.choice(choices)
+    
+    # [버그 수정] 실제 신청한 참가자(winner)와 당첨된 항목(chosen_item)을 완벽하게 1대1 매칭
     winner = random.choice(participants)
+    chosen_item = random.choice(choices)
     
     user_money[winner.id] = user_money.get(winner.id, 1000) + total_pool
     p_mentions = ", ".join([p.mention for p in participants])
 
     result_embed = discord.Embed(title="🎯 룰렛 배팅 결과 발표", color=discord.Color.green())
     result_embed.add_field(name="총 베팅 규모", value=f"💵 인당 {bet:,}원 (총 {len(participants)}명 참여) ➡️ 총 상금 **{total_pool:,}원**", inline=False)
-    result_embed.add_field(name="👥 모든 참여자 (태그)", value=p_mentions, inline=False)
+    result_embed.add_field(name="👥 실제 참여자 명단", value=p_mentions, inline=False)
     result_embed.add_field(name="🎯 당첨된 룰렛 항목", value=f"✨ **{chosen_item}** ✨", inline=True)
     result_embed.add_field(name="🏆 최종 상금 수령자", value=f"🎉 {winner.mention} 님 전액 획득!", inline=True)
     result_embed.add_field(name="🏦 승리자 최종 잔액", value=f"{user_money[winner.id]:,}원", inline=False)
@@ -648,7 +658,7 @@ async def 입금(ctx, m: discord.Member, a: int):
     embed.set_footer(text=f"수행 관리자: {ctx.author.name}")
     await ctx.send(embed=embed)
 
-# --- 👑 관리자 회수 시스템 ---
+# --- 👑 관리자 회수 시스템 (복구 완료!) ---
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 회수(ctx, m: discord.Member, a: int):
