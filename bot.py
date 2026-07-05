@@ -1,7 +1,9 @@
 import os, discord, random, asyncio, datetime
-from discord.ext import commands
+from discord.ext import commands, tasks
 from flask import Flask
 from threading import Thread
+import aiohttp
+import re
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -9,7 +11,13 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 user_money = {}
 game_states = {}
 
-# 웹 서버
+# --- [설정 공간] ---
+YOUTUBE_CHANNEL_URL = "여기에_유튜브_라이브_채널_주소를_넣으세요"  # 예: https://www.youtube.com/@정식채널명/live
+NOTICE_CHANNEL_ID = 123456789012345678  # 유튜브 라이브 공지가 올라갈 디스코드 텍스트 채널 ID (숫자만)
+IS_LIVE_NOW = False # 방송 상태 저장용 기본값
+# --------------------
+
+# 웹 서버 (Render 생존용)
 app = Flask('')
 @app.route('/')
 def home(): return "봇이 살아있어요!"
@@ -24,27 +32,158 @@ def get_score(hand):
     while score > 21 and aces: score -= 10; aces -= 1
     return score
 
-def create_embed(uid, data, msg="진행 중"):
+def create_embed(uid, data, msg="진행 중", is_final=False):
     embed = discord.Embed(title="♠️ 블랙잭 게임 ♣️", color=discord.Color.gold())
     embed.add_field(name="나의 카드", value=f"{' '.join(data['p'])} (합: {get_score(data['p'])})", inline=True)
-    embed.add_field(name="딜러 카드", value=f"{data['d'][0]} [??]", inline=True)
+    
+    # 게임 중일 땐 딜러 카드 첫 장만, 끝나면 전체 공개
+    dealer_val = f"{' '.join(data['d'])} (합: {get_score(data['d'])})" if is_final else f"{data['d'][0]} [??]"
+    embed.add_field(name="딜러 카드", value=dealer_val, inline=True)
+    
     embed.add_field(name="상태 정보", value=f"베팅액: {data['bet']}원\n총 자산: {user_money.get(uid, 1000)}원\n결과: {msg}", inline=False)
-    embed.set_footer(text="ㅎ:히트, ㅅ:스테이, ㄷ:더블, ㅍ:포기")
     return embed
 
-async def update_msg(msg, uid, data, status):
-    """메시지 업데이트 안전 함수"""
-    try:
-        await msg.edit(embed=create_embed(uid, data, status))
-    except discord.NotFound: # 메시지가 삭제된 경우 새로 보냄
-        return await msg.channel.send(embed=create_embed(uid, data, status))
-    return msg
+# --- 블랙잭 버튼 인터페이스 ---
+class BlackjackGameView(discord.ui.View):
+    def __init__(self, ctx, uid, data, msg_obj):
+        super().__init__(timeout=60.0)
+        self.ctx = ctx
+        self.uid = uid
+        self.data = data
+        self.msg_obj = msg_obj
+        self.is_finished = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.uid:
+            await interaction.response.send_message("❌ 본인의 게임 버튼만 누를 수 있습니다.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        if not self.is_finished:
+            game_states.pop(self.uid, None)
+            try: await self.msg_obj.edit(content="⏱️ 시간 초과로 게임이 취소되었습니다.", view=None)
+            except: pass
+
+    @discord.ui.button(label="히트 (ㅎ)", style=discord.Style.primary, custom_id="hit")
+    async def hit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        self.data['p'].append(self.data['deck'].pop())
+        
+        # 히트 시 사용자의 카드 요구 조건에 맞춰 딜러도 17 미만이면 한 장 같이 땡김 (실시간 동기화)
+        if get_score(self.data['d']) < 17 and get_score(self.data['p']) <= 21:
+            self.data['d'].append(self.data['deck'].pop())
+
+        if get_score(self.data['p']) > 21:
+            self.is_finished = True
+            user_money[self.uid] = user_money.get(self.uid, 1000) - self.data['bet']
+            await self.msg_obj.edit(embed=create_embed(self.uid, self.data, "💥 버스트! 패배", is_final=True), view=None)
+            self.stop()
+            await ask_next_game(self.ctx, self.data['bet'])
+        else:
+            await self.msg_obj.edit(embed=create_embed(self.uid, self.data, "진행 중"))
+
+    @discord.ui.button(label="스테이 (ㅅ)", style=discord.Style.success, custom_id="stay")
+    async def stay_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        self.is_finished = True
+        
+        while get_score(self.data['d']) < 17:
+            self.data['d'].append(self.data['deck'].pop())
+            
+        ps, ds = get_score(self.data['p']), get_score(self.data['d'])
+        res_msg = "🏆 승리!" if (ds > 21 or ps > ds) else ("❌ 패배!" if ps < ds else "🤝 무승부")
+        
+        if "승리" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) + self.data['bet']
+        elif "패배" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) - self.data['bet']
+        
+        await self.msg_obj.edit(embed=create_embed(self.uid, self.data, res_msg, is_final=True), view=None)
+        self.stop()
+        await ask_next_game(self.ctx, self.data['bet'])
+
+    @discord.ui.button(label="더블 (ㄷ)", style=discord.Style.secondary, custom_id="double")
+    async def double_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if (self.data['bet'] * 2) > user_money.get(self.uid, 1000):
+            return await interaction.response.send_message("⚠️ 잔액이 부족하여 더블다운이 불가능합니다.", ephemeral=True)
+        
+        await interaction.response.defer()
+        self.is_finished = True
+        self.data['bet'] *= 2
+        self.data['p'].append(self.data['deck'].pop())
+        
+        while get_score(self.data['d']) < 17:
+            self.data['d'].append(self.data['deck'].pop())
+            
+        ps, ds = get_score(self.data['p']), get_score(self.data['d'])
+        if ps > 21:
+            res_msg = "💥 버스트! 패배"
+            user_money[self.uid] = user_money.get(self.uid, 1000) - self.data['bet']
+        else:
+            res_msg = "🏆 승리!" if (ds > 21 or ps > ds) else ("❌ 패배!" if ps < ds else "🤝 무승부")
+            if "승리" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) + self.data['bet']
+            elif "패배" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) - self.data['bet']
+            
+        await self.msg_obj.edit(embed=create_embed(self.uid, self.data, f"더블다운 ➡️ {res_msg}", is_final=True), view=None)
+        self.stop()
+        await ask_next_game(self.ctx, self.data['bet'])
+
+    @discord.ui.button(label="포기 (ㅍ)", style=discord.Style.danger, custom_id="surrender")
+    async def surrender_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        self.is_finished = True
+        user_money[self.uid] = user_money.get(self.uid, 1000) - (self.data['bet'] // 2)
+        await self.msg_obj.edit(embed=create_embed(self.uid, self.data, "🏳️ 포기함 (절반 회수)", is_final=True), view=None)
+        self.stop()
+        await ask_next_game(self.ctx, self.data['bet'])
+
+# --- 다음 게임 진행 버튼 인터페이스 ---
+class NextGameView(discord.ui.View):
+    def __init__(self, ctx, uid, current_bet):
+        super().__init__(timeout=30.0)
+        self.ctx = ctx
+        self.uid = uid
+        self.current_bet = current_bet
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.uid:
+            await interaction.response.send_message("❌ 본인만 선택할 수 있습니다.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="1️⃣ 동일 배팅 진행", style=discord.Style.success)
+    async def re_same(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.message.delete()
+        self.stop()
+        await play_blackjack(self.ctx, self.current_bet)
+
+    @discord.ui.button(label="2️⃣ 2배 배팅 진행", style=discord.Style.primary)
+    async def re_double(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.message.delete()
+        self.stop()
+        await play_blackjack(self.ctx, self.current_bet * 2)
+
+    @discord.ui.button(label="3️⃣ 게임 종료", style=discord.Style.danger)
+    async def stop_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.message.delete()
+        self.stop()
+        await self.ctx.send("👋 게임을 종료합니다.")
+
+async def ask_next_game(ctx, current_bet):
+    uid = ctx.author.id
+    game_states.pop(uid, None)
+    final_money = user_money.get(uid, 1000)
+    
+    if final_money < 1000:
+        return await ctx.send("❌ 잔액이 부족(1000원 미만)하여 게임을 종료합니다.")
+        
+    view = NextGameView(ctx, uid, current_bet)
+    await ctx.send(f"🔄 다음 게임을 선택하세요! [현재 자산: {final_money}원]", view=view)
 
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
-    if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능.")
-    if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액 부족.")
-    if uid in game_states: return await ctx.send("이미 게임 중입니다.")
+    if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능합니다.")
+    if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액이 부족하여 게임을 시작할 수 없습니다.")
+    if uid in game_states: return await ctx.send("이미 진행 중인 게임이 있습니다.")
     
     game_states[uid] = True
     deck = [r+s for s in ['♠','♥','◆','♣'] for r in ['2','3','4','5','6','7','8','9','10','J','Q','K','A']]
@@ -54,63 +193,97 @@ async def play_blackjack(ctx, bet):
     
     msg = await ctx.send(embed=create_embed(uid, data))
     
-    while True:
-        try:
-            res = await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content in ['ㅎ','ㅅ','ㄷ','ㅍ'], timeout=30.0)
-            try: await res.delete()
-            except: pass
-            
-            if res.content == 'ㅎ':
-                p.append(deck.pop())
-                if get_score(p) > 21:
-                    user_money[uid] = user_money.get(uid, 1000) - bet
-                    msg = await update_msg(msg, uid, data, "💥 버스트! 패배")
-                    break
-                msg = await update_msg(msg, uid, data, "진행 중")
-            
-            elif res.content == 'ㅅ':
-                while get_score(d) < 17: d.append(deck.pop())
-                ps, ds = get_score(p), get_score(d)
-                res_msg = "🏆 승리!" if (ds > 21 or ps > ds) else ("❌ 패배!" if ps < ds else "🤝 무승부")
-                if "승리" in res_msg: user_money[uid] = user_money.get(uid, 1000) + bet
-                elif "패배" in res_msg: user_money[uid] = user_money.get(uid, 1000) - bet
-                msg = await update_msg(msg, uid, data, res_msg)
-                break
-                
-            elif res.content == 'ㄷ':
-                if (bet * 2) > user_money.get(uid, 1000): 
-                    await ctx.send("⚠️ 잔액 부족으로 더블 불가"); continue
-                bet *= 2; p.append(deck.pop()); data['bet'] = bet
-                msg = await update_msg(msg, uid, data, "더블다운!")
-                continue
-                
-            elif res.content == 'ㅍ':
-                user_money[uid] = user_money.get(uid, 1000) - (bet // 2)
-                msg = await update_msg(msg, uid, data, "🏳️ 포기함")
-                break
-        except asyncio.TimeoutError: break
+    # 즉시 블랙잭인 경우
+    if get_score(p) == 21:
+        game_states.pop(uid, None)
+        win = bet * 10
+        user_money[uid] = user_money.get(uid, 1000) + win
+        await msg.edit(embed=create_embed(uid, data, f"🎉 블랙잭(10배)! +{win}원", is_final=True))
+        await ask_next_game(ctx, bet)
+    else:
+        view = BlackjackGameView(ctx, uid, data, msg)
+        await msg.edit(view=view)
+
+# --- 유튜브 실시간 감지 태스크 ---
+@tasks.loop(minutes=5)
+async def check_youtube_live():
+    global IS_LIVE_NOW
+    if YOUTUBE_CHANNEL_URL == "여기에_유튜브_라이브_채널_주소를_넣으세요": return
     
-    del game_states[uid]
-    prompt = await ctx.send(f"🔄 다음 게임? (1:동일, 2:2배, 3:종료) [자산: {user_money.get(uid, 1000)}원]")
     try:
-        next_c = await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content in ['1','2','3'], timeout=20.0)
-        await next_c.delete(); await prompt.delete()
-        if next_c.content == '1': await play_blackjack(ctx, bet)
-        elif next_c.content == '2': await play_blackjack(ctx, bet * 2)
-        else: await ctx.send("게임을 종료합니다.")
-    except: await prompt.delete()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(YOUTUBE_CHANNEL_URL) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    # 유튜브 라이브 스트리밍 중일 때 HTML 내에 포함되는 고유 키워드 검색
+                    is_live = '\"isLive\":true' in html or 'liveStreamability' in html
+                    
+                    if is_live and not IS_LIVE_NOW:
+                        IS_LIVE_NOW = True
+                        channel = bot.get_channel(NOTICE_CHANNEL_ID)
+                        if channel:
+                            embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({YOUTUBE_CHANNEL_URL})", color=discord.Color.red())
+                            await channel.send(embed=embed)
+                    elif not is_live:
+                        IS_LIVE_NOW = False
+    except Exception as e:
+        print(f"유튜브 라이브 감지 오류: {e}")
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user.name}")
+    if not check_youtube_live.is_running():
+        check_youtube_live.start()
+
+# --- 관리자 및 일반 명령어 ---
+@bot.command()
+async def 블랙잭(ctx, bet: int = 1000): 
+    await play_blackjack(ctx, bet)
 
 @bot.command()
-async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
-@bot.command()
-async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
+async def 잔액(ctx): 
+    await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
+
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def 입금(ctx, m: discord.Member, a: int): 
+async def 입금(ctx, m: discord.Member, a: int):
+    try: await ctx.message.delete()  # 내가 친 !입금 명령어 삭제
+    except: pass
+    
     user_money[m.id] = user_money.get(m.id, 1000) + a
-    await ctx.send(f"✅ {m.name} 지급 완료.")
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    embed = discord.Embed(title="💵 자산 지급 완료", color=discord.Color.green())
+    embed.description = f"관리자 **{ctx.author.name}**님이 유저 **{m.name}**에게 **{a}원**을 지급하였습니다."
+    embed.add_field(name="지급 후 총 금액", value=f"💰 {user_money[m.id]}원", inline=False)
+    embed.set_footer(text=f"일시: {now_str}")
+    await ctx.send(embed=embed)
+
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
+async def 회수(ctx, m: discord.Member, a: int):
+    try: await ctx.message.delete()  # 내가 친 !회수 명령어 삭제
+    except: pass
+    
+    user_money[m.id] = user_money.get(m.id, 1000) - a
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    embed = discord.Embed(title="🛑 자산 회수 완료", color=discord.Color.red())
+    embed.description = f"관리자 **{ctx.author.name}**님이 유저 **{m.name}**에게서 **{a}원**을 회수하였습니다."
+    embed.add_field(name="회수 후 총 금액", value=f"💰 {user_money[m.id]}원", inline=False)
+    embed.set_footer(text=f"일시: {now_str}")
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 공지(ctx, ch: discord.TextChannel, *, t):
+    embed = discord.Embed(title="📢 [공지사항]", description=t, color=discord.Color.blue(), timestamp=datetime.datetime.now())
+    await ch.send(embed=embed)
+    await ctx.send("✅ 공지 임베드 전송 완료", delete_after=3)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 청소(ctx, n: int): 
+    await ctx.channel.purge(limit=n + 1)
 
 bot.run(os.environ['BOT_TOKEN'])
