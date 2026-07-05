@@ -50,14 +50,14 @@ def create_embed(uid, data, msg="진행 중", is_final=False):
     embed.add_field(name="상태 정보", value=f"베팅액: {data['bet']}원\n총 자산: {user_money.get(uid, 1000)}원\n결과: {msg}", inline=False)
     return embed
 
-# --- 블랙잭 버튼 인터페이스 ---
+# --- 블랙잭 버튼 인터페이스 (상호작용 응답 방식 전면 수정) ---
 class BlackjackGameView(discord.ui.View):
-    def __init__(self, ctx, uid, data, msg_obj):
+    def __init__(self, ctx, uid, data):
         super().__init__(timeout=60.0)
         self.ctx = ctx
         self.uid = uid
         self.data = data
-        self.msg_obj = msg_obj
+        self.msg_obj = None
         self.is_finished = False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -69,12 +69,13 @@ class BlackjackGameView(discord.ui.View):
     async def on_timeout(self):
         if not self.is_finished:
             game_states.pop(self.uid, None)
-            try: await self.msg_obj.edit(content="⏱️ 시간 초과로 게임이 취소되었습니다.", view=None)
+            try: 
+                if self.msg_obj:
+                    await self.msg_obj.edit(content="⏱️ 시간 초과로 게임이 취소되었습니다.", view=None, embed=None)
             except: pass
 
-    @discord.ui.button(label="히트 (ㅎ)", style=discord.ButtonStyle.primary, custom_id="hit")
+    @discord.ui.button(label="히트 (ㅎ)", style=discord.ButtonStyle.primary)
     async def hit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
         self.data['p'].append(self.data['deck'].pop())
         
         if get_score(self.data['d']) < 17 and get_score(self.data['p']) <= 21:
@@ -83,15 +84,14 @@ class BlackjackGameView(discord.ui.View):
         if get_score(self.data['p']) > 21:
             self.is_finished = True
             user_money[self.uid] = user_money.get(self.uid, 1000) - self.data['bet']
-            await self.msg_obj.edit(embed=create_embed(self.uid, self.data, "💥 버스트! 패배", is_final=True), view=None)
+            await interaction.response.edit_message(embed=create_embed(self.uid, self.data, "💥 버스트! 패배", is_final=True), view=None)
             self.stop()
             await ask_next_game(self.ctx, self.data['bet'])
         else:
-            await self.msg_obj.edit(embed=create_embed(self.uid, self.data, "진행 중"))
+            await interaction.response.edit_message(embed=create_embed(self.uid, self.data, "진행 중"))
 
-    @discord.ui.button(label="스테이 (ㅅ)", style=discord.ButtonStyle.success, custom_id="stay")
+    @discord.ui.button(label="스테이 (ㅅ)", style=discord.ButtonStyle.success)
     async def stay_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
         self.is_finished = True
         
         while get_score(self.data['d']) < 17:
@@ -103,16 +103,15 @@ class BlackjackGameView(discord.ui.View):
         if "승리" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) + self.data['bet']
         elif "패배" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) - self.data['bet']
         
-        await self.msg_obj.edit(embed=create_embed(self.uid, self.data, res_msg, is_final=True), view=None)
+        await interaction.response.edit_message(embed=create_embed(self.uid, self.data, res_msg, is_final=True), view=None)
         self.stop()
         await ask_next_game(self.ctx, self.data['bet'])
 
-    @discord.ui.button(label="더블 (ㄷ)", style=discord.ButtonStyle.secondary, custom_id="double")
+    @discord.ui.button(label="더블 (ㄷ)", style=discord.ButtonStyle.secondary)
     async def double_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if (self.data['bet'] * 2) > user_money.get(self.uid, 1000):
             return await interaction.response.send_message("⚠️ 잔액이 부족하여 더블다운이 불가능합니다.", ephemeral=True)
         
-        await interaction.response.defer()
         self.is_finished = True
         self.data['bet'] *= 2
         self.data['p'].append(self.data['deck'].pop())
@@ -129,16 +128,15 @@ class BlackjackGameView(discord.ui.View):
             if "승리" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) + self.data['bet']
             elif "패배" in res_msg: user_money[self.uid] = user_money.get(self.uid, 1000) - self.data['bet']
             
-        await self.msg_obj.edit(embed=create_embed(self.uid, self.data, f"더블다운 ➡️ {res_msg}", is_final=True), view=None)
+        await interaction.response.edit_message(embed=create_embed(self.uid, self.data, f"더블다운 ➡️ {res_msg}", is_final=True), view=None)
         self.stop()
         await ask_next_game(self.ctx, self.data['bet'])
 
-    @discord.ui.button(label="포기 (ㅍ)", style=discord.ButtonStyle.danger, custom_id="surrender")
+    @discord.ui.button(label="포기 (ㅍ)", style=discord.ButtonStyle.danger)
     async def surrender_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
         self.is_finished = True
         user_money[self.uid] = user_money.get(self.uid, 1000) - (self.data['bet'] // 2)
-        await self.msg_obj.edit(embed=create_embed(self.uid, self.data, "🏳️ 포기함 (절반 회수)", is_final=True), view=None)
+        await interaction.response.edit_message(embed=create_embed(self.uid, self.data, "🏳️ 포기함 (절반 회수)", is_final=True), view=None)
         self.stop()
         await ask_next_game(self.ctx, self.data['bet'])
 
@@ -200,17 +198,16 @@ async def play_blackjack(ctx, bet):
     p, d = [deck.pop(), deck.pop()], [deck.pop(), deck.pop()]
     data = {'deck': deck, 'p': p, 'd': d, 'bet': bet}
     
-    msg = await ctx.send(embed=create_embed(uid, data))
-    
+    view = BlackjackGameView(ctx, uid, data)
+    msg = await ctx.send(embed=create_embed(uid, data), view=view)
+    view.msg_obj = msg  # 시간 초과 제어용 오브젝트 바인딩
+
     if get_score(p) == 21:
         game_states.pop(uid, None)
         win = bet * 10
         user_money[uid] = user_money.get(uid, 1000) + win
-        await msg.edit(embed=create_embed(uid, data, f"🎉 블랙잭(10배)! +{win}원", is_final=True))
+        await msg.edit(embed=create_embed(uid, data, f"🎉 블랙잭(10배)! +{win}원", is_final=True), view=None)
         await ask_next_game(ctx, bet)
-    else:
-        view = BlackjackGameView(ctx, uid, data, msg)
-        await msg.edit(view=view)
 
 # --- 유튜브 실시간 감지 태스크 ---
 @tasks.loop(minutes=5)
@@ -257,26 +254,31 @@ async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
 
 @bot.command()
-async def 사다리(ctx, *choices: str):
-    if not choices:
-        return await ctx.send("⚠️ 사용법: `!사다리 항목1 항목2 항목3 ...` 형태로 입력해 주세요!")
+async def 사다리(ctx, *, args: str = None):
+    if not args:
+        return await ctx.send("⚠️ 사용법: `!사다리 항목1 항목2 항목3 ...` (띄어쓰기로 구분)")
+    choices = args.split()
+    if len(choices) < 2:
+        return await ctx.send("⚠️ 최소 2개 이상의 항목을 입력해 주세요!")
     
     chosen = random.choice(choices)
     embed = discord.Embed(title="🪜 사다리 타기 결과", color=discord.Color.blue())
     embed.add_field(name="선택된 후보들", value=", ".join(choices), inline=False)
-    embed.add_field(name="🎯 낙점 결과", value=f"**{chosen}**", inline=False)
+    embed.add_field(name="🎯 낙점 결과", value=f"✨ **{chosen}**", inline=False)
     embed.set_footer(text=f"요청자: {ctx.author.name}")
     await ctx.send(embed=embed)
 
 @bot.command()
-async def 룰렛(ctx, *choices: str):
-    if not choices:
-        return await ctx.send("⚠️ 사용법: `!룰렛 항목1 항목2 항목3 ...` 형태로 입력해 주세요!")
+async def 룰렛(ctx, *, args: str = None):
+    if not args:
+        return await ctx.send("⚠️ 사용법: `!룰렛 항목1 항목2 항목3 ...` (띄어쓰기로 구분)")
+    choices = args.split()
+    if len(choices) < 2:
+        return await ctx.send("⚠️ 최소 2개 이상의 항목을 입력해 주세요!")
     
     embed = discord.Embed(title="🎰 룰렛 돌리는 중...", description="🔮 과연 결과는?! \n\n[ 🪙 🟥 🟨 🟩 🟦 🟪 ]", color=discord.Color.purple())
     msg = await ctx.send(embed=embed)
     
-    # 긴장감을 위한 룰렛 회전 연출 효과
     spin_emojis = ["[ 🟥 🟨 🟩 🟦 🟪 ]", "[ 🟪 🟥 🟨 🟩 🟦 ]", "[ 🟦 🟪 🟥 🟨 🟩 ]", "[ 🟩 🟦 🟪 🟥 🟨 ]"]
     for i in range(3):
         await asyncio.sleep(0.6)
@@ -330,29 +332,29 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 
-# 🚀 [메인 비동기 구동 엔진]
+# 🚀 [이중 예외 방어형 메인 비동기 구동 엔진]
 async def main():
     token = os.environ.get('BOT_TOKEN')
     
     if not token or len(token.strip()) < 10:
-        print("\n❌ [🚨 경고] 'BOT_TOKEN'이 환경변수에 등록되지 않았거나 올바르지 않습니다.")
-        print("토큰 입력을 완료할 때까지 Render 포트 유지를 위해 대기 모드로 진입합니다...\n")
+        print("\n❌ [안내] 'BOT_TOKEN'이 비어있습니다. Render 먹통 방지를 위해 상시 생존 모드를 유지합니다...")
         while True:
             await asyncio.sleep(3600)
 
     try:
         async with bot:
             await bot.start(token)
-    except discord.errors.LoginFailure:
-        print("\n❌ [🚨 토큰 오류] 디스코드 인증에 실패했습니다! 토큰 값이 정확한지 대시보드 환경변수를 확인하세요.")
-        print("포트 연결을 끊지 않기 위해 대기 상태를 유지합니다.\n")
+    except Exception as e:
+        print(f"\n❌ [구동 실패 비상 제어 시스템 가동] 오류 로그: {e}")
+        print("토큰 값 혹은 네트워크 문제로 디스코드 서버와의 연결이 차단되었습니다.")
+        print("대시보드 먹통 현상을 막기 위해 프로세스를 강제 대기 상태로 유지합니다.\n")
         while True:
             await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     from threading import Thread
     port = int(os.environ.get("PORT", 10000))
-    print(f"📡 Render 전용 포트 감지 웹 서버 기동: {port}")
+    print(f"📡 Render 전용 포트 감지 웹 서버 선행 기동 완료: {port}")
     
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
