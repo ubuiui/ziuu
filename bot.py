@@ -15,7 +15,7 @@ except ImportError:
 
 from discord.ext import commands, tasks
 
-# 🚨 [중요] Render 빌드 에러 및 채팅 인식 문제를 방지하기 위해 인텐트를 명시적으로 선언합니다.
+# Render 빌드 에러 및 채팅/타자 인식 방지 인텐트 설정
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -188,6 +188,152 @@ async def play_blackjack(ctx, bet):
             await main_msg.edit(content="⏱️ 제한시간 초과로 게임이 자동 취소되었습니다.", embed=None)
             return
 
+# --- 🏎️ 추가 기능 1: 자동차 경주 게임 ---
+@bot.command()
+async def 경주(ctx, bet: int = 1000):
+    uid = ctx.author.id
+    if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능합니다.")
+    if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액이 부족하여 시작할 수 없습니다.")
+    if uid in game_states: return await ctx.send("이미 진행 중인 미니게임이 있습니다.")
+
+    game_states[uid] = True
+    cars = {
+        "🔴 레드카": 0, "🔵 블루카": 0, "🟢 그린카": 0, "🟡 옐로우카": 0
+    }
+    car_list = list(cars.keys())
+    
+    guide = await ctx.send(
+        f"🏎️ **꼬마 자동차 경주 배팅!** [배팅금: {bet}원]\n"
+        f"💬 채팅창에 응원할 자동차 번호를 입력하세요 (10초 제한):\n"
+        f"**1**: 🔴 레드카 | **2**: 🔵 블루카 | **3**: 🟢 그린카 | **4**: 🟡 옐로우카"
+    )
+
+    def check(m):
+        return m.author.id == uid and m.channel.id == ctx.channel.id and m.content.strip() in ['1', '2', '3', '4']
+
+    try:
+        msg = await bot.wait_for('message', check=check, timeout=10.0)
+        user_pick = car_list[int(msg.content.strip()) - 1]
+        try: await msg.delete()
+        except: pass
+    except asyncio.TimeoutError:
+        game_states.pop(uid, None)
+        return await guide.edit(content="⏱️ 시간 초과로 경주가 취소되었습니다.")
+
+    embed = discord.Embed(title="🏎️ 경주 트랙 스타트!", color=discord.Color.blue())
+    race_msg = await ctx.send(embed=embed)
+    await guide.delete()
+
+    finish_line = 15
+    while True:
+        await asyncio.sleep(1.0)
+        for car in cars:
+            cars[car] += random.randint(1, 4)
+
+        status_text = ""
+        for car, pos in cars.items():
+            lane = "." * min(pos, finish_line)
+            emoji = car[0]
+            if pos >= finish_line:
+                status_text += f"{car}: {lane}{emoji} 🏁 **GOAL!**\n"
+            else:
+                status_text += f"{car}: {lane}{emoji}{'.' * (finish_line - pos)}🏁\n"
+
+        embed.description = status_text
+        await race_msg.edit(embed=embed)
+
+        winners = [car for car, pos in cars.items() if pos >= finish_line]
+        if winners:
+            winner = random.choice(winners) # 동시 도착 시 랜덤 처리
+            break
+
+    game_states.pop(uid, None)
+    res_embed = discord.Embed(title="🏁 경주 종료 결과 🏁", color=discord.Color.gold())
+    res_embed.description = status_text
+    
+    if winner == user_pick:
+        win_money = bet * 3
+        user_money[uid] = user_money.get(uid, 1000) + (win_money - bet)
+        res_embed.add_field(name="🎉 축하합니다!", value=f"선택하신 **{user_pick}**가 1등을 했습니다!\n**+{win_money}원** 획득! (현재 잔액: {user_money[uid]}원)")
+    else:
+        user_money[uid] = user_money.get(uid, 1000) - bet
+        res_embed.add_field(name="❌ 아쉽습니다", value=f"우승마는 **{winner}**였습니다. (선택: {user_pick})\n**-{bet}원** 차감 (현재 잔액: {user_money[uid]}원)")
+        
+    await ctx.send(embed=res_embed)
+
+# --- ⚡ 추가 기능 2: 순발력 타자 게임 ---
+@bot.command()
+async def 타자(ctx):
+    sentences = [
+        "간장공장공장장은강공장장이고", "경찰청창살외창살은쌍창살이고",
+        "내가그린기린그림은긴기린그림이고", "RenderServer2026",
+        "민지유최고의스트리머", "블랙잭대박기원", "상호작용실패없는최강봇"
+    ]
+    target = random.choice(sentences)
+    
+    embed = discord.Embed(title="⚡ 순발력 타자 게임! ⚡", color=discord.Color.purple())
+    embed.description = f"아래 문장을 가장 먼저 치는 사람이 상금을 가져갑니다!\n\n제시어: 📝 **{target}**"
+    await ctx.send(embed=embed)
+
+    def check(m):
+        return m.channel.id == ctx.channel.id and m.content.strip() == target and not m.author.bot
+
+    try:
+        winner_msg = await bot.wait_for('message', check=check, timeout=30.0)
+        winner = winner_msg.author
+        prize = random.randint(500, 2000)
+        user_money[winner.id] = user_money.get(winner.id, 1000) + prize
+        
+        await ctx.send(f"🏆 **{winner.name}**님 칼타자 인정! **+{prize}원** 상금이 지급되었습니다! (총 자산: {user_money[winner.id]}원)")
+    except asyncio.TimeoutError:
+        await ctx.send("⏱️ 30초 동안 아무도 정확하게 입력하지 않아 게임이 종료되었습니다.")
+
+# --- 🎰 추가 기능 3: 슬롯머신 게임 ---
+@bot.command()
+async def 슬롯(ctx, bet: int = 1000):
+    uid = ctx.author.id
+    if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능합니다.")
+    if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액이 부족하여 슬롯을 돌릴 수 없습니다.")
+    
+    emojis = ["🍒", "🍇", "🍋", "🔔", "💎"]
+    
+    embed = discord.Embed(title="🎰 슬롯머신 가동 중...", description="[ 🪙 | 🪙 | 🪙 ]", color=discord.Color.orange())
+    msg = await ctx.send(embed=embed)
+    
+    # 회전 연출
+    for _ in range(3):
+        await asyncio.sleep(0.5)
+        fake_slots = [random.choice(emojis) for _ in range(3)]
+        embed.description = f"[ {fake_slots[0]} | {fake_slots[1]} | {fake_slots[2]} ]"
+        await msg.edit(embed=embed)
+
+    # 최종 결과 뽑기
+    res = [random.choice(emojis) for _ in range(3)]
+    embed.description = f"[ {res[0]} | {res[1]} | {res[2]} ]"
+    
+    # 정산 로직
+    if res[0] == res[1] == res[2]:
+        if res[0] == "💎":
+            multiplier = 20
+            msg_text = "💎💎💎 대박 JACKPOT!!! (20배)"
+        else:
+            multiplier = 5
+            msg_text = f"🎉 트리플 완성! (5배)"
+        win = bet * multiplier
+        user_money[uid] = user_money.get(uid, 1000) + (win - bet)
+    elif res[0] == res[1] or res[1] == res[2] or res[0] == res[2]:
+        multiplier = 1.5
+        win = int(bet * multiplier)
+        user_money[uid] = user_money.get(uid, 1000) + (win - bet)
+        msg_text = "🔔 페어 성공! (1.5배)"
+    else:
+        user_money[uid] = user_money.get(uid, 1000) - bet
+        msg_text = "😭 꽝! 다음 기회에"
+
+    embed.title = "🎯 슬롯머신 결과 발표"
+    embed.add_field(name="정산 결과", value=f"{msg_text}\n변동 금액: {'+' if '배' in msg_text else '-'}{bet if '꽝' in msg_text else int(bet*multiplier)}원\n현재 자산: {user_money[uid]}원")
+    await msg.edit(embed=embed)
+
 # --- 유튜브 실시간 감지 태스크 ---
 @tasks.loop(minutes=5)
 async def check_youtube_live():
@@ -271,7 +417,7 @@ async def 룰렛(ctx, *, args: str = None):
     result_embed.add_field(name="전체 후보 리스트", value=", ".join(choices), inline=False)
     result_embed.add_field(name="🏆 최종 당첨 항목", value=f"✨ **{chosen}** ✨", inline=False)
     result_embed.set_footer(text=f"요청자: {ctx.author.name}")
-    await msg.edit(embed=result_embed)
+    await msg.edit(result_embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
