@@ -1,4 +1,8 @@
-import os, sys
+import os, sys, asyncio, datetime, random
+from threading import Thread
+import urllib.request
+import urllib.parse
+import urllib.error
 
 # --- [필수 라이브러리 자동 설치] ---
 try:
@@ -10,12 +14,7 @@ except ImportError:
     import discord
     from flask import Flask
 
-import random, asyncio, datetime
 from discord.ext import commands, tasks
-from threading import Thread
-import urllib.request
-import urllib.parse
-import urllib.error
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -24,7 +23,7 @@ user_money = {}
 game_states = {}
 
 # --- [설정 공간] ---
-ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
+ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데/live"  
 NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
 
@@ -36,11 +35,11 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 설정 (Render가 포트를 칼같이 감지하도록 루트 경로 고정)
+# 웹 서버 설정 (Render의 헬스체크 신호를 즉시 수신하도록 세팅)
 app = Flask('')
 @app.route('/')
 def home(): 
-    return "OK", 200  # Render 헬스체크 생존 신호 전송
+    return "OK", 200
 
 def get_score(hand):
     score = 0; aces = 0
@@ -302,9 +301,7 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 
-# 🚀 [비동기 포트 강제 점유 핵심 로직]
-# 메인 스레드에서 먼저 Flask 서버를 활성화해 Render의 포트 스캔을 패스시키고,
-# 서버 가동 신호를 확인하자마자 비동기 루프로 디스코드 봇을 병렬 실행합니다.
+# 🚀 포트 개방 후 디스코드 봇을 병렬 실행시키는 비동기 스레드 브릿지
 def run_discord_bot():
     token = os.environ.get('BOT_TOKEN')
     if token:
@@ -315,12 +312,5 @@ def run_discord_bot():
         print("❌ 'BOT_TOKEN' 환경변수가 없습니다.")
 
 if __name__ == "__main__":
-    # 1. 포트가 먼저 활성화될 수 있도록 디스코드 봇을 0.5초 대기 후 서브 스레드로 시작
-    t = Thread(target=run_discord_bot)
-    t.daemon = True
-    t.start()
-    
-    # 2. 메인 프로세스에서 Render가 들이미는 포트를 즉시 완전 개방
-    port = int(os.environ.get("PORT", 10000))
-    print(f"📡 Render 전용 포트 감지 시스템 활성화: {port}")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # 포트가 완벽히 점유되기 전 봇이 가로채는 것을 막기 위해 서브 스레드로 독립 작동
+    t = Thread(target=run_discord_bot, daemon=True)
