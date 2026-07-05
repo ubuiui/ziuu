@@ -2,8 +2,8 @@ import os, discord, random, asyncio, datetime
 from discord.ext import commands, tasks
 from flask import Flask
 from threading import Thread
-import aiohttp
-import re
+import urllib.request
+import urllib.error
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -11,13 +11,13 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 user_money = {}
 game_states = {}
 
-# --- [설정 공간] ---
-YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  # 예: https://www.youtube.com/@정식채널명/live
-NOTICE_CHANNEL_ID = 1520830878513762375  # 유튜브 라이브 공지가 올라갈 디스코드 텍스트 채널 ID (숫자만)
-IS_LIVE_NOW = False # 방송 상태 저장용 기본값
-# --------------------
+# --- [⚠️ 여기만 정확하게 채워주세요!] ---
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  # 본인의 유튜브 라이브 주소
+NOTICE_CHANNEL_ID = 1520830878513762375  # 알림이 올라갈 디스코드 채널 ID (숫자만 입력, 따옴표 금지)
+IS_LIVE_NOW = False 
+# --------------------------------------
 
-# 웹 서버 (Render 생존용)
+# 웹 서버 (Render 24시간 가동 생존용)
 app = Flask('')
 @app.route('/')
 def home(): return "봇이 살아있어요!"
@@ -35,11 +35,8 @@ def get_score(hand):
 def create_embed(uid, data, msg="진행 중", is_final=False):
     embed = discord.Embed(title="♠️ 블랙잭 게임 ♣️", color=discord.Color.gold())
     embed.add_field(name="나의 카드", value=f"{' '.join(data['p'])} (합: {get_score(data['p'])})", inline=True)
-    
-    # 게임 중일 땐 딜러 카드 첫 장만, 끝나면 전체 공개
     dealer_val = f"{' '.join(data['d'])} (합: {get_score(data['d'])})" if is_final else f"{data['d'][0]} [??]"
     embed.add_field(name="딜러 카드", value=dealer_val, inline=True)
-    
     embed.add_field(name="상태 정보", value=f"베팅액: {data['bet']}원\n총 자산: {user_money.get(uid, 1000)}원\n결과: {msg}", inline=False)
     return embed
 
@@ -70,7 +67,6 @@ class BlackjackGameView(discord.ui.View):
         await interaction.response.defer()
         self.data['p'].append(self.data['deck'].pop())
         
-        # 히트 시 사용자의 카드 요구 조건에 맞춰 딜러도 17 미만이면 한 장 같이 땡김 (실시간 동기화)
         if get_score(self.data['d']) < 17 and get_score(self.data['p']) <= 21:
             self.data['d'].append(self.data['deck'].pop())
 
@@ -193,7 +189,6 @@ async def play_blackjack(ctx, bet):
     
     msg = await ctx.send(embed=create_embed(uid, data))
     
-    # 즉시 블랙잭인 경우
     if get_score(p) == 21:
         game_states.pop(uid, None)
         win = bet * 10
@@ -204,30 +199,32 @@ async def play_blackjack(ctx, bet):
         view = BlackjackGameView(ctx, uid, data, msg)
         await msg.edit(view=view)
 
-# --- 유튜브 실시간 감지 태스크 ---
+# --- 유튜브 실시간 감지 태스크 (외장 설치 없이 순수 내장 기능으로 작동) ---
 @tasks.loop(minutes=5)
 async def check_youtube_live():
     global IS_LIVE_NOW
-    if YOUTUBE_CHANNEL_URL == "여기에_유튜브_라이브_채널_주소를_넣으세요": return
+    if not YOUTUBE_CHANNEL_URL or NOTICE_CHANNEL_ID == 0: return
     
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(YOUTUBE_CHANNEL_URL) as response:
-                if response.status == 200:
-                    html = await response.text()
-                    # 유튜브 라이브 스트리밍 중일 때 HTML 내에 포함되는 고유 키워드 검색
-                    is_live = '\"isLive\":true' in html or 'liveStreamability' in html
-                    
-                    if is_live and not IS_LIVE_NOW:
-                        IS_LIVE_NOW = True
-                        channel = bot.get_channel(NOTICE_CHANNEL_ID)
-                        if channel:
-                            embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({YOUTUBE_CHANNEL_URL})", color=discord.Color.red())
-                            await channel.send(embed=embed)
-                    elif not is_live:
-                        IS_LIVE_NOW = False
-    except Exception as e:
-        print(f"유튜브 라이브 감지 오류: {e}")
+    def fetch_html():
+        try:
+            req = urllib.request.Request(YOUTUBE_CHANNEL_URL, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                return response.read().decode('utf-8')
+        except: return ""
+
+    loop = asyncio.get_event_loop()
+    html = await loop.run_in_executor(None, fetch_html)
+    
+    if html:
+        is_live = '\"isLive\":true' in html or 'liveStreamability' in html
+        if is_live and not IS_LIVE_NOW:
+            IS_LIVE_NOW = True
+            channel = bot.get_channel(NOTICE_CHANNEL_ID)
+            if channel:
+                embed = discord.Embed(title="🔴 유튜브 실시간 방송 시작!", description=f"지금 바로 방송을 시청하세요!\n[방송 바로가기]({YOUTUBE_CHANNEL_URL})", color=discord.Color.red())
+                await channel.send(embed=embed)
+        elif not is_live:
+            IS_LIVE_NOW = False
 
 @bot.event
 async def on_ready():
@@ -235,24 +232,20 @@ async def on_ready():
     if not check_youtube_live.is_running():
         check_youtube_live.start()
 
-# --- 관리자 및 일반 명령어 ---
+# --- 명령어 ---
 @bot.command()
-async def 블랙잭(ctx, bet: int = 1000): 
-    await play_blackjack(ctx, bet)
+async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
 @bot.command()
-async def 잔액(ctx): 
-    await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
+async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000)}원입니다.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 입금(ctx, m: discord.Member, a: int):
-    try: await ctx.message.delete()  # 내가 친 !입금 명령어 삭제
+    try: await ctx.message.delete()
     except: pass
-    
     user_money[m.id] = user_money.get(m.id, 1000) + a
     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
     embed = discord.Embed(title="💵 자산 지급 완료", color=discord.Color.green())
     embed.description = f"관리자 **{ctx.author.name}**님이 유저 **{m.name}**에게 **{a}원**을 지급하였습니다."
     embed.add_field(name="지급 후 총 금액", value=f"💰 {user_money[m.id]}원", inline=False)
@@ -262,12 +255,10 @@ async def 입금(ctx, m: discord.Member, a: int):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 회수(ctx, m: discord.Member, a: int):
-    try: await ctx.message.delete()  # 내가 친 !회수 명령어 삭제
+    try: await ctx.message.delete()
     except: pass
-    
     user_money[m.id] = user_money.get(m.id, 1000) - a
     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
     embed = discord.Embed(title="🛑 자산 회수 완료", color=discord.Color.red())
     embed.description = f"관리자 **{ctx.author.name}**님이 유저 **{m.name}**에게서 **{a}원**을 회수하였습니다."
     embed.add_field(name="회수 후 총 금액", value=f"💰 {user_money[m.id]}원", inline=False)
@@ -283,7 +274,6 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def 청소(ctx, n: int): 
-    await ctx.channel.purge(limit=n + 1)
+async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 bot.run(os.environ['BOT_TOKEN'])
