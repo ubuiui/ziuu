@@ -1,13 +1,11 @@
 import os, sys
 
-# --- [Render 배포 필수: 필수 라이브러리 자동 설치 시스템] ---
-# requirements.txt 파일이 없어도 봇이 알아서 패키지를 설치하여 status 1 에러를 방지합니다.
+# --- [필수 라이브러리 자동 설치] ---
 try:
     import discord
     from flask import Flask
 except ImportError:
     import subprocess
-    print("🔄 필수 라이브러리가 없어 자동 설치를 시작합니다...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "flask"])
     import discord
     from flask import Flask
@@ -27,10 +25,9 @@ game_states = {}
 
 # --- [설정 공간] ---
 ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
-NOTICE_CHANNEL_ID = 1520830878513762375  # 확실히 확인하신 19자리 ID 그대로 사용합니다.
+NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
 
-# 한글 유튜브 주소 안전 인코딩 변환
 try:
     parsed_url = urllib.parse.urlparse(ORIGINAL_YOUTUBE_URL)
     encoded_path = urllib.parse.quote(parsed_url.path)
@@ -39,18 +36,11 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 (Render 24시간 가동 및 포트 충돌 방지)
+# 웹 서버 설정
 app = Flask('')
 @app.route('/')
-def home(): return "봇이 완벽하게 가동 중입니다."
-
-def run_flask():
-    # Render가 요구하는 포트 번호를 동적으로 매칭 (status 1 원천 차단)
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-
-# 웹 서버를 백그라운드에서 즉시 실행하여 Render의 헬스체크 통과
-Thread(target=run_flask, daemon=True).start()
+def home(): 
+    return "봇이 완벽하게 가동 중입니다."
 
 def get_score(hand):
     score = 0; aces = 0
@@ -161,7 +151,6 @@ class BlackjackGameView(discord.ui.View):
         self.stop()
         await ask_next_game(self.ctx, self.data['bet'])
 
-# --- 다음 게임 진행 버튼 인터페이스 ---
 class NextGameView(discord.ui.View):
     def __init__(self, ctx, uid, current_bet):
         super().__init__(timeout=30.0)
@@ -264,11 +253,11 @@ async def check_youtube_live():
 
 @bot.event
 async def on_ready():
-    print(f"✅ 로그인 성공: {bot.user.name}")
+    print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
     if not check_youtube_live.is_running():
         check_youtube_live.start()
 
-# --- 명령어 ---
+# --- 명령어 공간 생략 (동일) ---
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
@@ -312,9 +301,23 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# 토큰 보안 체크 후 가동
-token = os.environ.get('BOT_TOKEN')
-if not token:
-    print("❌ Render 환경 변수(Environment)에 'BOT_TOKEN' 설정이 누락되었습니다.")
-else:
-    bot.run(token)
+
+# 🚀 [포트 오류 해결 핵심 로직] 
+# 디스코드 봇을 백그라운드로 밀고, Flask 웹 서버를 '메인 스레드'에서 먼저 실행하여 Render의 헬스체크를 칼같이 통과시킵니다.
+def run_discord_bot():
+    token = os.environ.get('BOT_TOKEN')
+    if token:
+        # discord.py 버전에 따른 루프 꼬임 방지 처리
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        bot.run(token)
+    else:
+        print("❌ 'BOT_TOKEN' 환경변수가 없습니다.")
+
+if __name__ == "__main__":
+    # 1. 디스코드 봇 백그라운드 준비
+    Thread(target=run_discord_bot, daemon=True).start()
+    
+    # 2. 메인 스레드에서 즉시 포트 활성화 (Render 통과용)
+    port = int(os.environ.get("PORT", 10000))
+    print(f"📡 Render 포트 바인딩 시작 (Port: {port})")
+    app.run(host='0.0.0.0', port=port)
