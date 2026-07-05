@@ -33,7 +33,7 @@ gift_cooldowns = {}
 disaster_cooldowns = {}   
 
 # --- [설정 공간] ---
-YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데/live"  
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
 NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
 # --------------------
