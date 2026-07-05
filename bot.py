@@ -11,17 +11,23 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 user_money = {}
 game_states = {}
 
-# --- [⚠️ 여기만 정확하게 채워주세요!] ---
-YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  # 본인의 유튜브 라이브 주소
-NOTICE_CHANNEL_ID = 1520830878513762375  # 알림이 올라갈 디스코드 채널 ID (숫자만 입력, 따옴표 금지)
+# --- [설정 공간] ---
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  # ⚠️ 본인의 유튜브 라이브 주소 정확히 입력
+NOTICE_CHANNEL_ID = 1520830878513762375  # ⚠️ 디스코드 채널 ID 입력 (따옴표 없이 숫자만!)
 IS_LIVE_NOW = False 
-# --------------------------------------
+# --------------------
 
-# 웹 서버 (Render 24시간 가동 생존용)
+# 웹 서버 (Render 포트 충돌 방지 튜닝)
 app = Flask('')
 @app.route('/')
 def home(): return "봇이 살아있어요!"
-Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
+
+def run_flask():
+    # Render가 주는 포트를 자동으로 찾아서 실행 (없으면 10000번)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+Thread(target=run_flask, daemon=True).start()
 
 def get_score(hand):
     score = 0; aces = 0
@@ -199,11 +205,12 @@ async def play_blackjack(ctx, bet):
         view = BlackjackGameView(ctx, uid, data, msg)
         await msg.edit(view=view)
 
-# --- 유튜브 실시간 감지 태스크 (외장 설치 없이 순수 내장 기능으로 작동) ---
+# --- 유튜브 실시간 감지 태스크 ---
 @tasks.loop(minutes=5)
 async def check_youtube_live():
     global IS_LIVE_NOW
-    if not YOUTUBE_CHANNEL_URL or NOTICE_CHANNEL_ID == 0: return
+    if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or NOTICE_CHANNEL_ID == 0: 
+        return
     
     def fetch_html():
         try:
@@ -276,4 +283,5 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-bot.run(os.environ['BOT_TOKEN'])
+# Render 환경변수에 토큰을 저장했으면 아래 코드가 안전하게 읽어옵니다.
+bot.run(os.environ.get('BOT_TOKEN'))
