@@ -1,6 +1,19 @@
-import os, discord, random, asyncio, datetime
+import os, sys
+
+# --- [Render 배포 필수: 필수 라이브러리 자동 설치 시스템] ---
+# requirements.txt 파일이 없어도 봇이 알아서 패키지를 설치하여 status 1 에러를 방지합니다.
+try:
+    import discord
+    from flask import Flask
+except ImportError:
+    import subprocess
+    print("🔄 필수 라이브러리가 없어 자동 설치를 시작합니다...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "flask"])
+    import discord
+    from flask import Flask
+
+import random, asyncio, datetime
 from discord.ext import commands, tasks
-from flask import Flask
 from threading import Thread
 import urllib.request
 import urllib.parse
@@ -14,7 +27,7 @@ game_states = {}
 
 # --- [설정 공간] ---
 ORIGINAL_YOUTUBE_URL = "https://www.youtube.com/@민지유_인데요/live"  
-NOTICE_CHANNEL_ID = 1520830878513762375  # 원래 적어주신 ID 그대로 숫자로 복구했습니다.
+NOTICE_CHANNEL_ID = 1520830878513762375  # 확실히 확인하신 19자리 ID 그대로 사용합니다.
 IS_LIVE_NOW = False 
 
 # 한글 유튜브 주소 안전 인코딩 변환
@@ -26,17 +39,17 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 (Render 24시간 가동 및 포트 강제 바인딩)
+# 웹 서버 (Render 24시간 가동 및 포트 충돌 방지)
 app = Flask('')
 @app.route('/')
-def home(): return "봇이 가동 중입니다."
+def home(): return "봇이 완벽하게 가동 중입니다."
 
 def run_flask():
-    # Render는 PORT 환경변수를 무조건 매칭해줘야 status 1이 안 납니다.
+    # Render가 요구하는 포트 번호를 동적으로 매칭 (status 1 원천 차단)
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# Flask 서버를 백그라운드에서 즉시 실행
+# 웹 서버를 백그라운드에서 즉시 실행하여 Render의 헬스체크 통과
 Thread(target=run_flask, daemon=True).start()
 
 def get_score(hand):
@@ -299,9 +312,9 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# 토큰 누락 시 명확하게 로깅하고 크래시 방지
+# 토큰 보안 체크 후 가동
 token = os.environ.get('BOT_TOKEN')
 if not token:
-    print("❌ 에러: Render 환경 변수(Environment)에 'BOT_TOKEN'이 등록되지 않았습니다.")
+    print("❌ Render 환경 변수(Environment)에 'BOT_TOKEN' 설정이 누락되었습니다.")
 else:
     bot.run(token)
