@@ -12,8 +12,8 @@ user_money = {}
 game_states = {}
 
 # --- [설정 공간] ---
-YOUTUBE_CHANNEL_URL = "여기에_유튜브_라이브_채널_주소를_넣으세요"  # 예: https://www.youtube.com/@정식채널명/live
-NOTICE_CHANNEL_ID = 123456789012345678  # 유튜브 라이브 공지가 올라갈 디스코드 텍스트 채널 ID (숫자만)
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  # 예: https://www.youtube.com/@정식채널명/live
+NOTICE_CHANNEL_ID = 1520830878513762375  # 유튜브 라이브 공지가 올라갈 디스코드 텍스트 채널 ID (숫자만)
 IS_LIVE_NOW = False # 방송 상태 저장용 기본값
 # --------------------
 
