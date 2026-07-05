@@ -513,6 +513,58 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
+# --- 📊 데이터 조회 시스템 (!데이터) ---
+@bot.command()
+async def 데이터(ctx):
+    uid = ctx.author.id
+    user_names[uid] = ctx.author.name
+    
+    # 1. 관리자(Administrator)가 명령어를 쳤을 때 -> 전체 데이터 모니터링
+    if ctx.author.guild_permissions.administrator:
+        embed = discord.Embed(title="🔎 [관리자 전용] 서버 전체 데이터 모니터링", color=discord.Color.dark_magenta())
+        
+        if not user_names:
+            embed.description = "현재 기록된 유저 데이터가 없습니다."
+            return await ctx.send(embed=embed)
+            
+        for user_id, name in user_names.items():
+            # 출석 데이터 가져오기
+            att = attendance_data.get(user_id, {"streak": 0, "total": 0, "last_date": "기록 없음"})
+            money = user_money.get(user_id, 1000)
+            
+            # 현재 게임 중 여부 체크 (game_states에 ID가 있으면 게임 중)
+            is_playing = "🎮 게임 진행 중" if user_id in game_states else "💤 대기 중"
+            
+            user_info = (
+                f"💰 **보유 자산**: {money}원\n"
+                f"🔥 **연속 출석**: {att['streak']}일 | 📊 **누적**: {att['total']}일\n"
+                f"📅 **최근 출석**: {att['last_date']}\n"
+                f"⚡ **현재 상태**: {is_playing}"
+            )
+            embed.add_field(name=f"👤 {name} ({user_id})", value=user_info, inline=False)
+            
+        embed.set_footer(text="💡 실시간으로 업데이트되는 서버 데이터입니다.")
+        await ctx.send(embed=embed)
+
+    # 2. 일반 유저가 명령어를 쳤을 때 -> 본인 데이터만 출력
+    else:
+        embed = discord.Embed(title=f"📋 {ctx.author.name}님의 실시간 데이터", color=discord.Color.blue())
+        att = attendance_data.get(uid, {"streak": 0, "total": 0, "last_date": "기록 없음"})
+        money = user_money.get(uid, 1000)
+        
+        today_str = datetime.date.today().strftime("%Y-%m-%d")
+        is_today_att = "✅ 완료" if att['last_date'] == today_str else "❌ 미완료"
+        is_playing = "🎮 게임 진행 중" if uid in game_states else "💤 대기 중"
+        
+        embed.add_field(name="💰 현재 자산", value=f"{money}원", inline=True)
+        embed.add_field(name="📅 오늘 출석 여부", value=is_today_att, inline=True)
+        embed.add_field(name="⚡ 현재 상태", value=is_playing, inline=True)
+        embed.add_field(name="🔥 연속 출석 일수", value=f"{att['streak']}일", inline=True)
+        embed.add_field(name="📊 누적 출석 일수", value=f"{att['total']}일", inline=True)
+        embed.add_field(name="📝 마지막 출석일", value=att['last_date'], inline=True)
+        
+        await ctx.send(embed=embed)
+
 async def main():
     token = os.environ.get('BOT_TOKEN')
     if not token or len(token.strip()) < 10:
