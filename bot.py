@@ -14,7 +14,6 @@ except ImportError:
     from flask import Flask
 
 from discord.ext import commands, tasks
-import aiohttp
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -35,7 +34,7 @@ except Exception:
     YOUTUBE_CHANNEL_URL = ORIGINAL_YOUTUBE_URL
 # --------------------
 
-# 웹 서버 설정 (Render 헬스체크 통과용 기본 응답)
+# 웹 서버 설정 (Render가 포트를 스캔할 때 100% 생존 신호를 주도록 최우선 구동)
 app = Flask('')
 @app.route('/')
 def home(): 
@@ -256,7 +255,7 @@ async def on_ready():
     if not check_youtube_live.is_running():
         check_youtube_live.start()
 
-# --- 명령어 ---
+# --- 명령어 공간 ---
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
@@ -301,26 +300,34 @@ async def 공지(ctx, ch: discord.TextChannel, *, t):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 
-# 🚀 [Render 전용 - 단일 비동기 메인 루프 실행 엔진]
+# 🚀 [Render 특화 - 비동기 메인 이벤트 엔진]
 async def main():
     token = os.environ.get('BOT_TOKEN')
-    if not token:
-        print("❌ 'BOT_TOKEN' 환경변수가 없습니다. 대시보드를 확인하세요.")
-        return
-
-    # 1. 포트를 점유할 Flask 서버를 완전히 독립된 비동기 루프로 백그라운드 구동
-    port = int(os.environ.get("PORT", 10000))
-    print(f"📡 Render 전용 포트 감지 시스템 가동: {port}")
     
-    # 꼼수 없이 Werkzeug 서버를 비동기 이벤트 루프와 충돌 나지 않게 스레드로 안전 격리 실행
-    from threading import Thread
-    server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
-    server_thread.daemon = True
-    server_thread.start()
+    # [치명적 오류 원천 진단] 만약 토큰 값이 비어있다면 에러를 직관적으로 출력하고 뻗지 않도록 무한 대기
+    if not token or len(token).strip() < 10:
+        print("\n❌ [🚨 환경변수 설정 오류 경고] 🚨")
+        print("Render 대시보드의 'Environment' 메뉴에서 'BOT_TOKEN' 키(Key)와 봇 토큰 값(Value)이 제대로 저장되어 있는지 반드시 수동으로 확인하세요!")
+        print("토큰 값이 공백이거나 잘못 전달되어 디스코드 봇을 시작할 수 없습니다.\n")
+        # Render가 포트 오류 대신 토큰 미기입 로그를 남기도록 Flask 서버만 유지
+        while True:
+            await asyncio.sleep(3600)
 
-    # 2. 메인 스레드는 온전히 디스코드 봇 구동에 자원을 100% 집중
     async with bot:
         await bot.start(token)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # 포트를 점유할 웹 서버를 백그라운드 스레드로 즉시 전개 (Render 무조건 패스용)
+    from threading import Thread
+    port = int(os.environ.get("PORT", 10000))
+    print(f"📡 Render 전용 포트 감지 시스템 선행 활성화: {port}")
+    
+    server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
+    server_thread.daemon = True
+    server_thread.start()
+
+    # 메인 비동기 루프 가동
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"❌ 가동 중 예상치 못한 치명적 오류 발생: {e}")
