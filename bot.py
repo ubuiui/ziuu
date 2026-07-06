@@ -76,30 +76,42 @@ NEWS_DB = {
 # --- [주식 변동 시스템] ---
 @tasks.loop(minutes=1)
 async def update_stocks():
-    # 1. 주식 가격 변동
+    # 1. 기본 변동 (일반적인 시장 등락)
     for stock in stocks:
-        change_rate = random.uniform(0.97, 1.04) # 변동폭 설정
+        change_rate = random.uniform(0.97, 1.04) 
         stocks[stock] = int(stocks[stock] * change_rate)
         if stocks[stock] < 100: stocks[stock] = 100
     
+    # 2. 뉴스 생성 및 주가 즉시 반영 로직
+    news_display = ""
+    # 10% 확률로 뉴스 발생
+    if random.random() < 0.1:  
+        target_stock = random.choice(list(stocks.keys()))
+        news_type = random.choice(["호재", "악재"])
+        news_template = random.choice(NEWS_DB[news_type])
+        
+        # [핵심] 호재/악재에 따른 주가 강제 변동
+        if news_type == "호재":
+            stocks[target_stock] = int(stocks[target_stock] * 1.25) # 25% 폭등
+            news_display = f"\n📢 **[경제 뉴스]** {news_template.format(name=target_stock)}\n🔥 **{target_stock} 주가 폭등!**"
+        else:
+            stocks[target_stock] = int(stocks[target_stock] * 0.75) # 25% 폭락
+            news_display = f"\n📢 **[경제 뉴스]** {news_template.format(name=target_stock)}\n💥 **{target_stock} 주가 폭락!**"
+            
     save_data()
     
-    # 2. 채널 알림
+    # 3. 채널 알림
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if channel:
         msg = "📊 **[시장 상황 보고]**\n--------------------------\n"
         for name, price in stocks.items():
             msg += f"📈 {name}: {price:,}원\n"
-        msg += "--------------------------\n"
+        msg += "--------------------------"
         
-        # 3. 뉴스 랜덤 출력 (40% 확률)
-        if random.random() < 0.1:
-            target_stock = random.choice(list(stocks.keys()))
-            news_type = random.choice(["호재", "악재"])
-            news_template = random.choice(NEWS_DB[news_type])
-            msg += f"\n📢 **[실시간 경제 뉴스]**\n{news_template.format(name=target_stock)}\n\n"
+        if news_display:
+            msg += news_display
             
-        msg += "사용법: `!매수 [종목명] [수량]`"
+        msg += "\n사용법: `!매수 [종목명] [수량]`"
         await channel.send(msg)
 
 # ==========================================
