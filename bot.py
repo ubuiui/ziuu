@@ -37,7 +37,7 @@ def save_data():
 
 # --- [설정 공간] ---
 YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
-NOTICE_CHANNEL_ID = 1520830878513762375  
+NOTICE_CHANNEL_ID = 1523727776014794925
 IS_LIVE_NOW = False 
 app = Flask('')
 @app.route('/')
