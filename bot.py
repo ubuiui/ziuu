@@ -30,13 +30,18 @@ try:
 except Exception as e:
     print(f"⚠️ MongoDB 연결 실패, 오프라인 모드로 시작합니다: {e}")
 
-# [중요] 데이터 로드 함수도 에러가 나면 무시하도록 처리
 def load_all_data():
-    if users_col is None: return
+    if users_col is None: 
+        return
     try:
         cursor = users_col.find({})
         for doc in cursor:
-            # ... (기존 로드 코드) ...
+            uid = doc["_id"]
+            user_money[uid] = doc.get("money", 1000)
+            user_stocks[uid] = doc.get("stocks", {})
+            user_names[uid] = doc.get("name", "알수없음")
+            attendance_data[uid] = doc.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
+            user_stats[uid] = doc.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
         print("✅ 데이터 로드 완료")
     except Exception as e:
         print(f"⚠️ 데이터 로드 중 에러: {e}")
