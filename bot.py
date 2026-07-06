@@ -7,8 +7,9 @@ from pymongo import MongoClient
 
 # --- [초기 설정] ---
 intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
+intents.message_content = True  # 필수
+intents.members = True          # 필수 (관리자 명령어 및 유저 정보 확인용)
+intents.presences = True        # 봇 상태 표시를 위해 필수
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # --- [DB 및 데이터 초기화] ---
@@ -32,28 +33,23 @@ stocks = {
     "어둠반도체": 19000, "여름전자": 80200, "해나물류": 3000, "헤응인터내셔널": 1000
 }
 
-# --- [DB 저장 및 로드 함수] ---
 def save_user_db(uid):
-    users_col.update_one(...)
-    if result.acknowledged: # <--- 여기서 result가 없어 오류 발생
-        print(...)
-
-# 수정 후
-def save_user_db(uid):
-    result = users_col.update_one( # result를 먼저 받아와야 합니다.
-        {"_id": uid},
-        {"$set": {
-            "money": user_money.get(uid, 1000),
-            "stocks": user_stocks.get(uid, {}),
-            "name": user_names.get(uid, "알수없음"),
-            "attendance": attendance_data.get(uid, {"streak": 0, "total": 0, "last_date": ""}),
-            "stats": user_stats.get(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-        }},
-        upsert=True
-    )
-    # 이제 안전하게 result를 사용합니다.
-    if result.acknowledged:
-        print(f"✅ 유저 {uid} 데이터 DB 저장 완료!")
+    try:
+        result = users_col.update_one(
+            {"_id": uid},
+            {"$set": {
+                "money": user_money.get(uid, 1000),
+                "stocks": user_stocks.get(uid, {}),
+                "name": user_names.get(uid, "알수없음"),
+                "attendance": attendance_data.get(uid, {"streak": 0, "total": 0, "last_date": ""}),
+                "stats": user_stats.get(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+            }},
+            upsert=True
+        )
+        if result.acknowledged:
+            print(f"✅ 유저 {uid} 데이터 DB 저장 완료!")
+    except Exception as e:
+        print(f"❌ DB 저장 오류: {e}")
 
 def load_all_data():
     global user_money, user_stocks, user_names, attendance_data, user_stats
@@ -132,7 +128,6 @@ async def update_stocks():
             stocks[target_stock] = int(stocks[target_stock] * 0.75) # 25% 폭락
             news_display = f"\n📢 **[경제 뉴스]** {news_template.format(name=target_stock)}\n💥 **{target_stock} 주가 폭락!**"
             
-    save_data()
     
     # 3. 채널 알림
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
@@ -154,24 +149,28 @@ async def update_stocks():
 
 @bot.command()
 async def 매수(ctx, name: str, qty: int):
+    uid = ctx.author.id
     if name not in stocks or qty <= 0:
         return await ctx.send("❌ 존재하지 않는 종목이거나 잘못된 수량입니다.")
     
     cost = stocks[name] * qty
-    if user_money.get(ctx.author.id, 1000) < cost:
+    if user_money.get(uid, 1000) < cost:
         return await ctx.send("❌ 잔액이 부족합니다!")
     
-    user_money[ctx.author.id] -= cost
+    user_money[uid] -= cost
     
-    if ctx.author.id not in user_stocks:
-        user_stocks[ctx.author.id] = {}
+    if uid not in user_stocks:
+        user_stocks[uid] = {}
     
-    # 평단가 계산 로직
-    current_data = user_stocks[ctx.author.id].get(name, {"qty": 0, "avg_price": 0})
+    # 평단가 계산
+    current_data = user_stocks[uid].get(name, {"qty": 0, "avg_price": 0})
     total_qty = current_data["qty"] + qty
     new_avg = ((current_data["qty"] * current_data["avg_price"]) + (qty * stocks[name])) / total_qty
     
-    user_stocks[ctx.author.id][name] = {"qty": total_qty, "avg_price": int(new_avg)}
+    user_stocks[uid][name] = {"qty": total_qty, "avg_price": int(new_avg)}
+    
+    # [핵심] DB 저장 함수 호출
+    save_user_db(uid)
     
     await ctx.send(f"✅ {name} {qty}주 매수 완료! (평단가: {int(new_avg):,}원)")
 
@@ -195,30 +194,53 @@ async def 내주식(ctx):
             
     await ctx.send(msg)
 
+@bot.command()
+async def 내정보(ctx):
+    uid = ctx.author.id
+    
+    # 혹시 모를 로드 (DB에서 최신 데이터 가져오기)
+    data = users_col.find_one({"_id": uid})
+    if data:
+        user_money[uid] = data.get("money", 1000)
+        user_stocks[uid] = data.get("stocks", {})
+        attendance_data[uid] = data.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
+    
+    money = user_money.get(uid, 1000)
+    stocks_info = user_stocks.get(uid, {})
+    
+    # 주식 목록 문자열 만들기
+    stock_str = "\n".join([f"{name}: {info['qty']}주 (평단: {info['avg_price']:,}원)" for name, info in stocks_info.items()])
+    if not stock_str: stock_str = "보유 주식이 없습니다."
+    
+    embed = discord.Embed(title=f"👤 {ctx.author.name}님의 정보", color=discord.Color.blue())
+    embed.add_field(name="💰 보유 자산", value=f"{money:,}원", inline=False)
+    embed.add_field(name="📈 보유 주식", value=stock_str, inline=False)
+    embed.add_field(name="📅 출석 횟수", value=f"{attendance_data.get(uid, {}).get('total', 0)}회", inline=True)
+    
+    await ctx.send(embed=embed)
+
 # --- 주식 매도 기능 ---
 @bot.command()
 async def 매도(ctx, name: str, qty: int):
     uid = ctx.author.id
-    my_stocks = user_stocks.get(uid, {})
+    # 1. 예외 처리
+    if name not in user_stocks.get(uid, {}) or user_stocks[uid][name]["qty"] < qty:
+        return await ctx.send("❌ 보유 중인 주식이 없거나 수량이 부족합니다.")
     
-    # 1. 데이터 확인: 해당 종목을 보유 중인지, 수량이 충분한지 체크
-    if name not in my_stocks or my_stocks[name]["qty"] < qty:
-        return await ctx.send(f"❌ 해당 종목을 {qty}주만큼 보유하고 있지 않습니다.")
-    if qty <= 0:
-        return await ctx.send("⚠️ 매도 수량은 1주 이상이어야 합니다.")
+    # 2. 매도 로직
+    sell_price = stocks[name] * qty
+    user_money[uid] = user_money.get(uid, 1000) + sell_price
+    user_stocks[uid][name]["qty"] -= qty
     
-    # 2. 매도 가격 정산
-    sale_price = stocks[name] * qty
+    # 수량이 0이면 해당 종목 삭제
+    if user_stocks[uid][name]["qty"] == 0:
+        del user_stocks[uid][name]
+        
+    # [핵심] DB 저장 함수 호출 (돈과 주식이 모두 변했으므로 반드시 호출!)
+    save_user_db(uid)
     
-    # 3. 데이터 업데이트 (구조: {"qty": 수량, "avg_price": 평단가})
-    my_stocks[name]["qty"] -= qty
-    user_money[uid] = user_money.get(uid, 1000) + sale_price
-    
-    # 4. 잔여 수량이 0이면 리스트에서 완전히 제거 (깔끔한 정산)
-    if my_stocks[name]["qty"] == 0:
-        del my_stocks[name]
-    
-    await ctx.send(f"✅ {name} {qty}주를 {sale_price:,}원에 매도 완료했습니다! (현재 잔액: {user_money[uid]:,}원)")
+    await ctx.send(f"✅ {name} {qty}주 매도 완료! (획득 금액: {sell_price:,}원)")
+
 @tasks.loop(hours=1.5)
 async def treasure_event():
     channel = bot.get_channel(NOTICE_CHANNEL_ID) 
@@ -575,6 +597,8 @@ async def 경주(ctx, bet: int = 1000):
         res_embed.add_field(name="❌ 아쉽습니다", value=f"승리한 예빈이는 **{winner}**였습니다. (선택: {user_pick})\n**-{bet:,}원** 차감 (현재 잔액: {user_money[uid]:,}원)")
         await ctx.send(embed=res_embed)
 
+    save_user_db(uid)
+
 # --- ⚡ 미니게임 2: 순발력 타자 게임 ---
 @bot.command()
 async def 타자(ctx):
@@ -599,6 +623,8 @@ async def 타자(ctx):
         await ctx.send(f"🏆 **{winner.name}**님 칼타자 인정! **+{prize:,}원** 상금이 지급되었습니다! (총 자산: {user_money[winner.id]:,}원)")
     except asyncio.TimeoutError:
         await ctx.send("⏱️ 30초 동안 아무도 정확하게 입력하지 않아 게임이 종료되었습니다.")
+
+    save_user_db(uid)
 
 # --- 🎰 미니게임 3: 슬롯머신 게임 ---
 @bot.command()
@@ -648,6 +674,8 @@ async def 슬롯(ctx, bet: int = 1000):
         embed.add_field(name="정산 결과", value=f"{msg_text}\n변동 금액: -{bet:,}원\n현재 자산: {user_money[uid]:,}원")
         await msg.edit(embed=embed)
 
+    save_user_db(uid)
+
 # --- 🪜 미니게임 4: 사다리 타기 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
 async def 사다리(ctx, bet: int = None, *, args: str = None):
@@ -675,6 +703,8 @@ async def 사다리(ctx, bet: int = None, *, args: str = None):
     embed.add_field(name="🏆 최종 승리자", value=f"🎉 {winner.mention} 님 독식!!\n상금 **{total_pool:,}원**을 획득하셨습니다! (최종 잔액: {user_money[winner.id]:,}원)", inline=False)
     
     await ctx.send(content=f"🔔 {winner.mention} 축하합니다! 판돈을 모두 획득하셨습니다!", embed=embed)
+
+    save_user_db(uid)
 
 # --- 🎰 미니게임 5: 멀티 룰렛 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
@@ -713,6 +743,8 @@ async def 룰렛(ctx, bet: int = None, *, args: str = None):
     result_embed.add_field(name="🏆 최종 승리자", value=f"🎉 {winner.mention} 님 전액 독식!!\n상금 **{total_pool:,}원**을 획득하셨습니다! (최종 잔액: {user_money[winner.id]:,}원)", inline=False)
     
     await msg.edit(content=f"🔔 {winner.mention} 축하합니다! 대박 룰렛의 주인공이 되셨습니다!", embed=result_embed)
+
+    save_user_db(uid)
 
 # --- ❤️ [신규 미니게임 6] 실시간 중계형 멀티 소개팅 배팅 게임 ---
 @bot.command()
@@ -781,36 +813,32 @@ async def 소개팅(ctx, bet: int = None):
     embed.add_field(name="💕 매칭 결과 발표 💕", value=success_msg, inline=False)
     await live_msg.edit(embed=embed)
 
+    save_user_db(uid)
+
 # --- 📅 추가 기능: 출석 체크 시스템 ---
 @bot.command()
 async def 출석(ctx):
     uid = ctx.author.id
-    user_names[uid] = ctx.author.name
-    today = datetime.date.today()
-    today_str = today.strftime("%Y-%m-%d")
+    today = datetime.date.today().isoformat()
     
+    # 1. 데이터 초기화 및 출석 로직
     if uid not in attendance_data:
         attendance_data[uid] = {"streak": 0, "total": 0, "last_date": ""}
-        
-    user_att = attendance_data[uid]
-    if user_att["last_date"] == today_str:
-        return await ctx.send(f"⚠️ {ctx.author.name}님, 오늘은 이미 출석체크를 완료하셨습니다!")
-        
-    yesterday_str = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    if user_att["last_date"] == yesterday_str: user_att["streak"] += 1
-    else: user_att["streak"] = 1
-        
-    user_att["total"] += 1
-    user_att["last_date"] = today_str
     
-    base_reward = 10000
-    bonus = min(user_att["streak"] * 2000, 20000)
-    total_reward = base_reward + bonus
-    user_money[uid] = user_money.get(uid, 1000) + total_reward
+    if attendance_data[uid]["last_date"] == today:
+        return await ctx.send("❌ 오늘은 이미 출석하셨습니다.")
     
-    embed = discord.Embed(title="📅 오늘의 출석 체크 완료! 📅", color=discord.Color.green())
-    embed.description = f"**{ctx.author.name}**님이 출석 도장을 찍었습니다!\n🔥 연속 {user_att['streak']}일 | 보상: +{total_reward:,}원"
-    await ctx.send(embed=embed)
+    # 출석 처리
+    attendance_data[uid]["streak"] += 1
+    attendance_data[uid]["total"] += 1
+    attendance_data[uid]["last_date"] = today
+    user_money[uid] = user_money.get(uid, 1000) + 500
+    user_names[uid] = ctx.author.name
+    
+    # [핵심] DB 저장
+    save_user_db(uid)
+    
+    await ctx.send(f"✅ 출석 완료! (+500원) 현재 연속 출석: {attendance_data[uid]['streak']}일째")
 
 # --- 🎁 신규 기능: 10분 주기 랜덤 선물 기능 ---
 @bot.command()
@@ -826,6 +854,8 @@ async def 선물(ctx):
     user_money[uid] = user_money.get(uid, 1000) + reward
     gift_cooldowns[uid] = now
     await ctx.send(f"🎁 깜짝 보상 도착! **{ctx.author.name}**님에게 **+{reward:,}원**이 지급되었습니다.")
+
+    save_user_db(uid)
 
 # --- 🚨 신규 기능: 올인 구제 재난지원금 기능 ---
 @bot.command()
@@ -843,33 +873,43 @@ async def 재난지원금(ctx):
     disaster_cooldowns[uid] = now
     await ctx.send(f"🚨 파산 복구 완료! **{ctx.author.name}**님에게 긴급 지원금 **+{reward:,}원**이 지급되었습니다.")
 
+    save_user_db(uid)
+
 # --- 💸 유저 간 실시간 송금 시스템 ---
 @bot.command()
 async def 송금(ctx, receiver: discord.Member, amount: int):
     sender = ctx.author
-    if sender.id == receiver.id: return await ctx.send("❌ 자기 자신에게는 송금할 수 없습니다.")
-    if receiver.bot: return await ctx.send("❌ 봇에게는 돈을 보낼 수 없습니다.")
-    if amount <= 0: return await ctx.send("⚠️ 송금 금액은 최소 1원 이상이어야 합니다.")
+    
+    # 1. 예외 처리: 자기 자신 송금 불가 및 0원 이하 방지
+    if sender.id == receiver.id:
+        return await ctx.send("❌ 자기 자신에게는 송금할 수 없습니다.")
+    if receiver.bot:
+        return await ctx.send("❌ 봇에게는 돈을 보낼 수 없습니다.")
+    if amount <= 0:
+        return await ctx.send("⚠️ 송금 금액은 최소 1원 이상이어야 합니다.")
+    if user_money.get(sender.id, 1000) < amount:
+        return await ctx.send(f"❌ 잔액이 부족합니다. (현재 보유 잔액: `{user_money.get(sender.id, 1000):,}원`)")
         
-    sender_money = user_money.get(sender.id, 1000)
-    if sender_money < amount:
-        return await ctx.send(f"❌ 잔액이 부족합니다. (현재 보유 잔액: `{sender_money:,}원`)")
-        
-    user_money[sender.id] = sender_money - amount
+    # 2. 송금 로직
+    user_money[sender.id] -= amount
     user_money[receiver.id] = user_money.get(receiver.id, 1000) + amount
     user_names[sender.id] = sender.name
     user_names[receiver.id] = receiver.name
     
-    embed = discord.Embed(title="💸 송금 완료 (실시간 정산)", color=discord.Color.teal())
-    embed.description = (
-        f"👥 **보낸 사람:** {sender.mention}\n"
-        f"🙋‍♂️ **받는 사람:** {receiver.mention}\n"
-        f"💰 **송금된 금액:** `{amount:,}원`"
-    )
-    embed.add_field(name=f"📉 {sender.name}님의 남은 잔액", value=f"`{user_money[sender.id]:,}원`", inline=True)
-    embed.add_field(name=f"📈 {receiver.name}님의 최종 잔액", value=f"`{user_money[receiver.id]:,}원`", inline=True)
-    embed.set_footer(text="시스템 메모리에 즉시 반영되었습니다.")
+    # [핵심] DB 저장 (보내는 사람, 받는 사람 둘 다!)
+    save_user_db(sender.id)
+    save_user_db(receiver.id)
+    
+    # 3. 결과 출력 (보낸사람 / 받는사람 / 송금액 명시)
+    embed = discord.Embed(title="💸 송금 완료", color=discord.Color.teal())
+    embed.add_field(name="📤 보낸 사람", value=sender.mention, inline=True)
+    embed.add_field(name="📥 받는 사람", value=receiver.mention, inline=True)
+    embed.add_field(name="💰 송금된 금액", value=f"`{amount:,}원`", inline=False)
+    embed.set_footer(text="데이터베이스에 즉시 반영되었습니다.")
+    
     await ctx.send(embed=embed)
+
+    save_user_db(uid)
 
 # --- 📢 세련된 임베드 공지사항 알림 시스템 ---
 @bot.command()
@@ -930,6 +970,8 @@ async def 랭킹(ctx):
     embed.set_footer(text="꾸준한 출석과 도박 한탕으로 타이틀을 쟁탈해 보세요!")
     await ctx.send(embed=embed)
 
+    save_user_db(uid)
+
 # --- 📊 데이터 조회 시스템 ---
 @bot.command()
 async def 데이터(ctx):
@@ -965,16 +1007,36 @@ async def 말해(ctx, channel: discord.TextChannel, *, message: str):
 
 # --- 👑 관리자 입금 시스템 ---
 @bot.command()
-@commands.has_permissions(administrator=True)
-async def 입금(ctx, m: discord.Member, a: int):
-    current_money = user_money.get(m.id, 1000)
-    user_money[m.id] = current_money + a
-    user_names[m.id] = m.name
+async def 정보(ctx, m: discord.Member = None):
+    m = m or ctx.author
+    uid = m.id
     
-    embed = discord.Embed(title="💵 관리자 자산 관리 [입금]", color=discord.Color.blue())
-    embed.description = f"🏦 대상자: {m.mention}\n💰 충전된 금액: `+{a:,}원`\n📊 최종 보유 자산: `{user_money[m.id]:,}원`"
-    embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
+    # 1. DB에서 가장 최신 데이터를 강제로 불러오기 (이게 핵심!)
+    data = users_col.find_one({"_id": uid})
+    if data:
+        user_money[uid] = data.get("money", 1000)
+        user_stocks[uid] = data.get("stocks", {})
+        user_stats[uid] = data.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+    
+    # 2. 값 가져오기
+    money = user_money.get(uid, 1000)
+    my_stocks = user_stocks.get(uid, {})
+    stats = user_stats.get(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+    
+    # 3. 주식 요약 만들기
+    stock_summary = "\n".join([f"- {name}: {info['qty']}주" for name, info in my_stocks.items() if info['qty'] > 0])
+    if not stock_summary: stock_summary = "보유 주식 없음"
+
+    embed = discord.Embed(title=f"📋 {m.name}님의 상세 정보", color=discord.Color.blue())
+    embed.add_field(name="💰 자산", value=f"{money:,}원", inline=True)
+    embed.add_field(name="⚔️ 전투 스탯", value=f"공격력: {stats['atk']}\n강화: +{stats['強化']}\n던전층수: {stats['dungeon_floor']}층", inline=True)
+    embed.add_field(name="📈 보유 주식", value=stock_summary, inline=False)
+    embed.set_footer(text=f"조회 관리자: {ctx.author.name}")
+    
     await ctx.send(embed=embed)
+
+    save_user_db(uid)
+
 
 # --- 👑 관리자 전용: 유저 전체 데이터 조회 ---
 @bot.command()
@@ -1009,36 +1071,21 @@ async def 회수(ctx, m: discord.Member, a: int):
     embed = discord.Embed(title="🛑 관리자 자산 관리 [회수]", color=discord.Color.red())
     embed.description = f"🏦 대상자: {m.mention}\n📉 차감된 금액: `-{a:,}원`\n📊 최종 보유 자산: `{user_money[m.id]:,}원`"
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
+
+    save_user_db(m.id)
+
     await ctx.send(embed=embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# 파일 최하단 코드를 이것으로 교체하세요.
-async def run_bot():
-    token = os.environ.get('BOT_TOKEN')
-    if not token: 
-        print("토큰 없음")
-        return
-
-    while True:
-        try:
-            await bot.start(token)
-        except discord.errors.HTTPException as e:
-            if e.status == 429:
-                print("⚠️ API 제한 감지! 15분간 대기 후 재시작합니다.")
-                await asyncio.sleep(900) 
-            else:
-                await asyncio.sleep(60) 
-        except Exception as e:
-            print(f"오류 발생: {e}")
-            await asyncio.sleep(60)
-
+# 파일 최하단
 if __name__ == "__main__":
+    # Flask 서버용 (Render 유지용)
     def run_flask():
-        port = int(os.environ.get("PORT", 10000))
-        app.run(host='0.0.0.0', port=port)
-    
+        app.run(host='0.0.0.0', port=10000)
     Thread(target=run_flask).start()
-    asyncio.run(run_bot())
+
+    # 디스코드 봇 시작
+    bot.run(os.environ.get('BOT_TOKEN'))
