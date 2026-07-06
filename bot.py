@@ -43,27 +43,63 @@ app = Flask('')
 @app.route('/')
 def home(): return "OK", 200
 
+# --- [뉴스 데이터베이스] ---
+NEWS_DB = {
+    "호재": [
+        "🚀 [호재] {name}, 신제품 대박 터져 주문 폭주!",
+        "💎 [호재] {name}, 업계 1위 기술력 인증으로 주가 상승!",
+        "📈 [호재] {name}, 경쟁사 몰락으로 시장 점유율 1위 등극!",
+        "🎁 [호재] {name}, 깜짝 배당 발표에 투자자들 환호!",
+        "✨ [호재] {name}, 유명 인플루언서와 광고 계약 체결!",
+        "🌟 [호재] {name}, 역대급 실적 달성으로 주주가치 제고!",
+        "🤝 [호재] {name}, 글로벌 대기업과 전략적 파트너십 체결!",
+        "🧪 [호재] {name}, 차세대 원천 기술 특허 등록 완료!",
+        "🏢 [호재] {name}, 본사 확장 이전 및 대규모 인재 채용!",
+        "🌈 [호재] {name}, 정부 주관 친환경 우수 기업 선정!",
+        "💰 [호재] {name}, 예상치 못한 대규모 투자 유치 성공!
+    ],
+    "악재": [
+        "⚠️ [악재] {name}, 공장 화재 발생으로 생산 차질...",
+        "📉 [악재] {name}, 내부 경영진 횡령 의혹 수사 착수!",
+        "💧 [악재] {name}, 제품 치명적 결함으로 전량 리콜 사태!",
+        "🚫 [악재] {name}, 대규모 파업으로 공장 가동 전면 중단!",
+        "💨 [악재] {name}, 3분기 실적 발표 결과, 적자 폭 확대...",
+        "💥 [악재] {name}, 핵심 기술 유출 사고로 검찰 조사 중...",
+        "🦠 [악재] {name}, 원자재 공급망 차질로 인한 원가 급상승!",
+        "📉 [악재] {name}, 주요 임원들의 대규모 주식 매도 소식!",
+        "🚨 [악재] {name}, 경쟁사와의 특허 소송에서 최종 패소!",
+        "🌫️ [악재] {name}, 시장의 외면으로 신제품 판매 부진 지속...",
+        "🥀 [악재] {name}, 노후 설비 폭발 사고로 안전성 논란 발생!"
+    ]
+}
+
 # --- [주식 변동 시스템] ---
 @tasks.loop(minutes=1)
 async def update_stocks():
-    # 1. 모든 주식 변동 로직
+    # 1. 주식 가격 변동
     for stock in stocks:
-        change_rate = random.uniform(0.99, 1.02)
+        change_rate = random.uniform(0.97, 1.04) # 변동폭 설정
         stocks[stock] = int(stocks[stock] * change_rate)
         if stocks[stock] < 100: stocks[stock] = 100
     
     save_data()
     
-    # 2. 지정된 채널로 보고 (NOTICE_CHANNEL_ID 변수 사용)
+    # 2. 채널 알림
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if channel:
-        msg = "📊 **[시장 상황 보고]**\n"
-        msg += "--------------------------\n"
+        msg = "📊 **[시장 상황 보고]**\n--------------------------\n"
         for name, price in stocks.items():
             msg += f"📈 {name}: {price:,}원\n"
         msg += "--------------------------\n"
-        msg += "사용법: `!매수 [종목명] [수량]`"
         
+        # 3. 뉴스 랜덤 출력 (40% 확률)
+        if random.random() < 0.1:
+            target_stock = random.choice(list(stocks.keys()))
+            news_type = random.choice(["호재", "악재"])
+            news_template = random.choice(NEWS_DB[news_type])
+            msg += f"\n📢 **[실시간 경제 뉴스]**\n{news_template.format(name=target_stock)}\n\n"
+            
+        msg += "사용법: `!매수 [종목명] [수량]`"
         await channel.send(msg)
 
 # ==========================================
