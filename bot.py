@@ -1,8 +1,5 @@
-import os, sys, asyncio, datetime, random, json
+import os, sys, asyncio, datetime, random, json, urllib.request # 여기 추가
 import discord
-from flask import Flask
-from discord.ext import commands, tasks
-from threading import Thread
 
 # --- [초기 설정] ---
 intents = discord.Intents.default()
@@ -21,12 +18,16 @@ attendance_data = {}
 user_names = {}
 user_stats = {}
 stocks = {
-    "예빈전자": 120000, "지유엔터": 15000, "헬프미": 8000, 
+    "예빈닉스": 120000, "지유엔터": 15000, "헬프미": 8000, 
     "명철수산": 12000, "찬우상사": 9500, "예원데이터": 25000, 
     "민지유건설": 18000, "피브테크": 7000, "루카드림": 13000, "우뱅미디어": 11000,
-    "어둠반도체": 19000, "우뱅테크놀로지": 80200, "유니버스": 3000, "헤응인터내셔널": 1000
+    "어둠반도체": 19000, "여름전자": 80200, "해나물류": 3000, "헤응인터내셔널": 1000
 
 }
+
+def save_data():
+    with open("data.json", "w", encoding="utf-8") as f:
+        json.dump({"money": user_money, "stocks": user_stocks}, f, ensure_ascii=False)
 
 # --- [설정 공간] ---
 YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
@@ -37,26 +38,40 @@ app = Flask('')
 def home(): return "OK", 200
 
 # --- [주식 변동 시스템] ---
-# 10분마다 실행되는 주식 변동 루프 (이렇게 딱 맞추세요)
-@tasks.loop(minutes=10)
+@tasks.loop(minutes=1)
 async def update_stocks():
-    for stock in stocks:
-        change_rate = random.uniform(0.98, 1.05)
-        if random.random() < 0.05:
-            change_rate = random.uniform(1.20, 1.50)
-        stocks[stock] = int(stocks[stock] * change_rate)
-    save_data()
-            
-        stocks[name] = int(stocks[name] * (1 + change))
-        # 최소 가격 1,000원 유지
-        if stocks[name] < 1000: stocks[name] = 1000
+    # 1. 호재/악재 뉴스 정의 (변동폭 10~20%)
+    news_events = [
+        ("계약 체결", 1.15), ("신제품 발표", 1.20), ("대규모 투자 유치", 1.10), # 호재
+        ("경영진 교체", 0.90), ("실적 부진", 0.85), ("특허 소송 패소", 0.80)    # 악재
+    ]
     
-    # 공지 채널에 업데이트 알림 (NOTICE_CHANNEL_ID 필요)
+    news_msg = None
+    # 15% 확률로 뉴스 발생
+    if random.random() < 0.15:
+        target_stock = random.choice(list(stocks.keys()))
+        event_name, multiplier = random.choice(news_events)
+        stocks[target_stock] = int(stocks[target_stock] * multiplier)
+        news_msg = f"📰 **[속보]** {target_stock} 주식이 **'{event_name}'** 소식으로 인해 주가가 크게 변동합니다!"
+    
+    # 2. 주식 일반 변동 (완만하게: -1% ~ +2%)
+    for stock in stocks:
+        if news_msg and stock in news_msg: continue
+        
+        change_rate = random.uniform(0.99, 1.02)
+        stocks[stock] = int(stocks[stock] * change_rate)
+        
+        # 최소 가격 100원 제한
+        if stocks[stock] < 100: stocks[stock] = 100
+    
+    save_data()
+
+    # 3. 디스코드 알림
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if channel:
-        await channel.send("📢 **주식 시장이 10분 간격으로 갱신되었습니다!** `!주식`으로 확인하세요.")
+        if news_msg:
+            await channel.send(news_msg)
 
-# [기존 주식 명령어를 아래로 교체]
 @bot.command()
 async def 주식(ctx):
     msg = ""
@@ -82,7 +97,7 @@ async def 매수(ctx, name: str, qty: int):
     # 자산 차감
     user_money[ctx.author.id] -= cost
     
-    # 주식 데이터 갱신 (딕셔너리가 없으면 생성)
+    # 주식 데이터 갱신
     if ctx.author.id not in user_stocks:
         user_stocks[ctx.author.id] = {}
     
@@ -653,7 +668,7 @@ async def 소개팅(ctx, bet: int = None):
 
     await asyncio.sleep(2.5)
 
-    # 소개팅 도중 일어날 수 있는 다양한 상황 대사 목록
+    # 대사 목록
     situations = [
         "님은 긴장해서 물을 마시다가 예빈이 옷에 다 쏟아 호감도가 대폭 하락했습니다! 💦",
         "님이 약속 장소에 세련되고 멋있는 차를 타고 와서 예빈이의 호감도가 1 상승하였습니다! 🚗",
@@ -664,7 +679,7 @@ async def 소개팅(ctx, bet: int = None):
         "님이 화려하고 센스 넘치는 패션 코디로 나타나 예빈이와의 소개팅에서 첫인상 점수 압승을 거둡니다! ✨"
     ]
 
-    # 참가자가 많든 적든, 스토리를 몇 번 굴려 실시간 상황을 연출
+  
     loop_count = 3 if len(participants) > 1 else 2
     for i in range(loop_count):
         target_user = random.choice(participants)
@@ -847,36 +862,6 @@ async def 데이터(ctx):
     money = user_money.get(uid, 1000)
     await ctx.send(f"📋 **{ctx.author.name}**님의 현재 자고 있는 자산은 **{money:,}원**입니다.")
 
-# --- 유튜브 실시간 방송 감지 태스크 ---
-@tasks.loop(minutes=10)
-async def update_stocks():
-    for stock in stocks:
-        change_rate = random.uniform(0.98, 1.05)
-        if random.random() < 0.05:
-            change_rate = random.uniform(1.20, 1.50)
-        stocks[stock] = int(stocks[stock] * change_rate)
-    save_data()
-
-    global IS_LIVE_NOW
-    if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: return
-    
-    def fetch_html():
-        try:
-            req = urllib.request.Request(YOUTUBE_CHANNEL_URL, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=10) as response: return response.read().decode('utf-8')
-        except: return ""
-        
-    loop = asyncio.get_event_loop()
-    html = await loop.run_in_executor(None, fetch_html)
-    if html:
-        is_live = '\"isLive\":true' in html or 'liveStreamability' in html
-        if is_live and not IS_LIVE_NOW:
-            IS_LIVE_NOW = True
-            try:
-                channel = bot.get_channel(int(NOTICE_CHANNEL_ID))
-                if channel: await channel.send(embed=discord.Embed(title="🔴 유튜브 실시간 방송 시작!", url=YOUTUBE_CHANNEL_URL, color=discord.Color.red()))
-            except: pass
-        elif not is_live: IS_LIVE_NOW = False
 
 @bot.event
 async def on_ready():
@@ -889,6 +874,15 @@ async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
 @bot.command()
 async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000):,}원입니다.")
+
+# --- 📢 대신 말하기 기능 ---
+@bot.command()
+async def 말해(ctx, channel: discord.TextChannel, *, message: str):
+    # 1. 메시지 보낼 채널에 전송
+    await channel.send(message)
+    
+    # 2. 명령어 입력한 메시지 삭제 (깔끔하게 흔적 지움)
+    await ctx.message.delete()
 
 # --- 👑 관리자 입금 시스템 ---
 @bot.command()
@@ -941,6 +935,8 @@ async def 회수(ctx, m: discord.Member, a: int):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
+
+# --- 마지막 실행 블록 (여기부터 파일 끝까지 아래 내용만 남기세요) ---
 
 async def main():
     token = os.environ.get('BOT_TOKEN')
