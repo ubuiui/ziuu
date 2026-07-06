@@ -1125,14 +1125,16 @@ async def 회수(ctx, m: discord.Member, a: int):
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 DB 연동 완료")
     await ctx.send(embed=embed)
 
-# [관리자 전용] 데이터 강제 저장 및 확인용 명령어
+# 수정 추천: 데이터를 저장할 때 아주 미세한 간격을 두어 차단을 방지합니다.
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def DB저장(ctx):
-    uid = ctx.author.id
-    # 현재 메모리상의 데이터를 DB에 강제 삽입
-    save_user_db(uid)
-    await ctx.send(f"✅ {ctx.author.name}님의 데이터를 DB에 강제 저장했습니다!")
+    count = 0
+    for uid in user_money.keys():
+        save_user_db(uid)
+        count += 1
+        await asyncio.sleep(0.5) # 0.5초씩 쉬면서 저장하여 차단을 방지
+    await ctx.send(f"✅ {count}명의 유저 데이터를 관리자 권한으로 강제 저장하였습니다.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
