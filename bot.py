@@ -12,15 +12,16 @@ intents.presences = True
 intents.reactions = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# [상단 데이터 저장소]
+# user_stats 구조를 상세화합니다.
+# 강화는 무기(atk), 체력(hp), 방어력(def) 별도로 관리합니다.
+user_stats = {} 
+# 예: {uid: {"atk": {"lvl": 0, "dur": 100}, "hp": {"lvl": 0}, "def": {"lvl": 0}, "stamina": 100}}
+
 # --- [데이터 저장소] ---
 user_money = {}
 user_stocks = {}
 game_states = {}
-attendance_data = {}
-user_names = {}
-gift_cooldowns = {}       
-disaster_cooldowns = {}   
-# [신규 추가 데이터]
 user_stats = {}  # {uid: {"atk": 10, "lvl": 1, "強化": 0}}
 stocks = {
     "예빈전자": 120000, "지유엔터": 15000, "헬프미": 8000, 
@@ -151,17 +152,62 @@ async def 강화(ctx):
         stat["強化"] = max(0, stat["強化"] - 1)
         await ctx.send(f"💥 강화 실패! 단계가 하락했습니다. (현재 단계: +{stat['強化']})")
 
+# --- [스태미너 및 상태 회복 시스템] ---
+@tasks.loop(minutes=5) # 5분마다 스태미너 5 회복
+async def recover_stamina():
+    for uid in user_stats:
+        if user_stats[uid].get("stamina", 30) < 30:
+            user_stats[uid]["stamina"] = min(30, user_stats[uid]["stamina"] + 5)
+    save_data()
+
+@bot.event
+async def on_ready():
+    recover_stamina.start()
+    print("🚀 봇 실행 및 시스템 가동 중...")
+
+# 던전 로직 (스태미너 및 내구도 소모 예시)
 @bot.command()
 async def 던전(ctx):
     uid = ctx.author.id
-    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-    needed_atk = stat["dungeon_floor"] * 50
-    if stat["atk"] < needed_atk:
-        return await ctx.send(f"☠️ 던전 입장 실패! {stat['dungeon_floor']}층을 깨려면 공격력 {needed_atk}이 필요합니다.")
-    stat["dungeon_floor"] += 1
-    reward = stat["dungeon_floor"] * 20000
-    user_money[uid] = user_money.get(uid, 1000) + reward
-    await ctx.send(f"⚔️ 던전 {stat['dungeon_floor']-1}층 정복 완료! 보상 {reward:,}원 획득! (다음 목표: {stat['dungeon_floor']}층)")
+    if uid not in user_stats: return await ctx.send("먼저 장비를 갖추세요!")
+    
+    stats = user_stats[uid]
+    if stats["stamina"] < 10: return await ctx.send("⚡ 스태미나가 부족합니다.")
+    if stats["atk"]["dur"] <= 0: return await ctx.send("🛠️ 내구도가 없습니다.")
+    
+    # 전투 계산 및 소모
+    stats["stamina"] -= 10
+    stats["atk"]["dur"] -= 5
+    await ctx.send(f"⚔️ 전투 완료! (남은 스태미나: {stats['stamina']}, 내구도: {stats['atk']['dur']})")
+
+# 5분마다 자동 회복 (on_ready에 recover_stamina.start() 추가 필수)
+@tasks.loop(minutes=5)
+async def recover_stamina():
+    for uid in user_stats:
+        user_stats[uid]["stamina"] = min(30, user_stats[uid]["stamina"] + 5)
+
+@bot.command()
+async def 파티던전(ctx, *members: discord.Member):
+    boss_hp = random.randint(100, 500)
+    boss_atk = random.randint(20, 50)
+    
+    await ctx.send(f"⚔️ 보스 출현! (HP: {boss_hp}) 전투를 시작합니다.")
+    
+    # 턴제 전투 로직
+    while boss_hp > 0:
+        for m in members:
+            damage = user_stats.get(m.id, {"atk": 10})["atk"]
+            boss_hp -= damage
+            await ctx.send(f"{m.name}의 공격! 보스에게 {damage} 데미지! (보스 HP: {boss_hp})")
+            if boss_hp <= 0: break
+        
+        if boss_hp > 0:
+            await ctx.send(f"보스의 반격! 파티원 전원에게 {boss_atk} 데미지!")
+            await asyncio.sleep(1)
+            
+    reward = boss_hp * 100 # 보상 분배
+    await ctx.send(f"🏆 승리! 수익금 {reward:,}원을 분배합니다.")
+    save_data()
 
 @tasks.loop(hours=1.5)
 async def treasure_event():
@@ -977,28 +1023,16 @@ async def 회수(ctx, m: discord.Member, a: int):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# 기존의 main() 함수와 if __name__ == "__main__": 블록을 전부 지우고 아래로 교체하세요.
-
-# --- 마지막 실행 블록 ---
-
+# --- 마지막 실행 블록 (여기가 파일의 끝이어야 합니다) ---
 async def main():
     token = os.environ.get('BOT_TOKEN')
-    if not token:
-        print("❌ 에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
-        return 
-    
-    try:
-        print("🚀 봇을 실행합니다...")
-        await bot.start(token)
-    except Exception as e:
-        print(f"❌ 봇 실행 중 치명적 오류 발생: {e}")
+    if not token: return
+    try: await bot.start(token)
+    except Exception as e: print(f"오류: {e}")
 
 if __name__ == "__main__":
-    # 플라스크 서버
     port = int(os.environ.get("PORT", 10000))
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
     server_thread.start()
-    
-    # 봇 시작
     asyncio.run(main())
