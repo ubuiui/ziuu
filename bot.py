@@ -20,6 +20,7 @@ game_states = {}
 attendance_data = {}
 user_names = {}
 user_stats = {}
+hot_stocks = set()
 stocks = {
     "예빈닉스": 120000, "지유엔터": 15000, "헬프미": 8000, 
     "명철수산": 12000, "찬우상사": 9500, "예원데이터": 25000, 
@@ -43,19 +44,34 @@ def home(): return "OK", 200
 # --- [주식 변동 시스템] ---
 @tasks.loop(minutes=1)
 async def update_stocks():
-    # 1. 호재/악재 뉴스 정의 (변동폭 10~20%)
+    # 1. 이전 급등주 기록 초기화
+    hot_stocks.clear() 
+    
     news_events = [
-        ("계약 체결", 1.15), ("신제품 발표", 1.20), ("대규모 투자 유치", 1.10), # 호재
-        ("경영진 교체", 0.90), ("실적 부진", 0.85), ("특허 소송 패소", 0.80)    # 악재
+        ("계약 체결", 1.15), ("신제품 발표", 1.20), ("대규모 투자 유치", 1.10),
+        ("경영진 교체", 0.90), ("실적 부진", 0.85), ("특허 소송 패소", 0.80)
     ]
     
     news_msg = None
-    # 15% 확률로 뉴스 발생
     if random.random() < 0.15:
         target_stock = random.choice(list(stocks.keys()))
         event_name, multiplier = random.choice(news_events)
         stocks[target_stock] = int(stocks[target_stock] * multiplier)
-        news_msg = f"📰 **[속보]** {target_stock} 주식이 **'{event_name}'** 소식으로 인해 주가가 크게 변동합니다!"
+        
+        # 속보가 뜬 종목을 급등주 세트에 추가
+        hot_stocks.add(target_stock) 
+        
+        news_msg = f"📰 **[예빈뉴스]** 긴급속보입니다! {target_stock} 주식이 **'{event_name}'** 소식으로 인해 주가가 크게 변동합니다!"
+    
+    # 2. 일반 변동 로직 (생략)
+    # ...
+
+    # 3. 지정된 채널로만 알림 전송
+    channel = bot.get_channel(1523727776014794925)
+    if channel and news_msg:
+        await channel.send(news_msg)
+    
+    save_data()
     
     # 2. 주식 일반 변동 (완만하게: -1% ~ +2%)
     for stock in stocks:
@@ -79,8 +95,8 @@ async def update_stocks():
 async def 주식(ctx):
     msg = ""
     for name, price in stocks.items():
-        # 급등주 표시
-        status = "🔥 급등" if price > 50000 else " " # 예시 로직
+        # hot_stocks에 포함된 종목만 🔥 표시
+        status = "🔥 급등" if name in hot_stocks else " " 
         msg += f"📈 {name}: {price:,}원 {status}\n"
     await ctx.send(f"📊 **현재 주식 시장**\n{msg}\n사용법: `!매수 [종목명] [수량]`")
 
@@ -137,17 +153,24 @@ async def 매도(ctx, name: str, qty: int):
     uid = ctx.author.id
     my_stocks = user_stocks.get(uid, {})
     
-    if name not in my_stocks or my_stocks[name] < qty:
+    # 1. 데이터 확인: 해당 종목을 보유 중인지, 수량이 충분한지 체크
+    if name not in my_stocks or my_stocks[name]["qty"] < qty:
         return await ctx.send(f"❌ 해당 종목을 {qty}주만큼 보유하고 있지 않습니다.")
     if qty <= 0:
         return await ctx.send("⚠️ 매도 수량은 1주 이상이어야 합니다.")
     
+    # 2. 매도 가격 정산
     sale_price = stocks[name] * qty
-    my_stocks[name] -= qty
+    
+    # 3. 데이터 업데이트 (구조: {"qty": 수량, "avg_price": 평단가})
+    my_stocks[name]["qty"] -= qty
     user_money[uid] = user_money.get(uid, 1000) + sale_price
     
+    # 4. 잔여 수량이 0이면 리스트에서 완전히 제거 (깔끔한 정산)
+    if my_stocks[name]["qty"] == 0:
+        del my_stocks[name]
+    
     await ctx.send(f"✅ {name} {qty}주를 {sale_price:,}원에 매도 완료했습니다! (현재 잔액: {user_money[uid]:,}원)")
-
 @tasks.loop(hours=1.5)
 async def treasure_event():
     channel = bot.get_channel(NOTICE_CHANNEL_ID) 
