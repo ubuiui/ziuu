@@ -58,23 +58,23 @@ async def 매수(ctx, name: str, qty: int):
 @bot.command()
 async def 내주식(ctx):
     uid = ctx.author.id
-    my_stocks = user_stocks.get(uid, {})
-    # 0주인 종목은 제외하고 보여주기
-    active_stocks = {name: qty for name, qty in my_stocks.items() if qty > 0}
+    my_stocks = user_stocks.get(uid, {}) # 데이터 불러오기
     
-    if not active_stocks:
-        return await ctx.send("📭 보유 중인 주식이 없습니다.")
+    # 만약 데이터가 비어있다면
+    if not my_stocks:
+        return await ctx.send("📉 현재 보유 중인 주식이 없습니다.")
     
-    msg = f"📂 **{ctx.author.name}님의 보유 현황**\n"
-    total_val = 0
-    for name, qty in active_stocks.items():
-        price = stocks.get(name, 0)
-        value = price * qty
-        total_val += value
-        msg += f"- {name}: {qty}주 (현재가: {price:,}원, 평가금액: {value:,}원)\n"
-    
-    msg += f"\n💰 **총 평가 자산: {total_val:,}원**"
-    await ctx.send(msg)
+    # 보유한 주식 목록 문자열로 만들기
+    msg = "💰 **보유 주식 목록**\n"
+    for name, qty in my_stocks.items():
+        if qty > 0: # 0주인 것은 제외
+            msg += f"- {name}: {qty}주\n"
+            
+    # 전체 목록이 여전히 비어있다면
+    if msg == "💰 **보유 주식 목록**\n":
+        await ctx.send("📉 현재 보유 중인 주식이 없습니다.")
+    else:
+        await ctx.send(msg)
 
 # --- 주식 매도 기능 ---
 @bot.command()
