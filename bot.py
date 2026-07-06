@@ -12,10 +12,6 @@ intents.presences = True
 intents.reactions = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# [상단 데이터 저장소]
-# user_stats 구조를 상세화합니다.
-# 강화는 무기(atk), 체력(hp), 방어력(def) 별도로 관리합니다.
-# 예: {uid: {"atk": {"lvl": 0, "dur": 100}, "hp": {"lvl": 0}, "def": {"lvl": 0}, "stamina": 100}}
 
 # --- [데이터 저장소] ---
 user_money = {}
@@ -73,10 +69,6 @@ async def 주식(ctx):
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
 # ==========================================
-@bot.command()
-async def 주식(ctx):
-    msg = "\n".join([f"📈 {name}: {price:,}원" for name, price in stocks.items()])
-    await ctx.send(f"📊 **현재 주식 시장**\n{msg}\n\n사용법: `!매수 [종목명] [수량]`")
 
 @bot.command()
 async def 매수(ctx, name: str, qty: int):
@@ -1029,12 +1021,12 @@ async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 async def main():
     token = os.environ.get('BOT_TOKEN')
     if not token:
-        print("❌ 에러: BOT_TOKEN 없음")
+        print("❌ 에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
         return 
     try:
         await bot.start(token)
     except Exception as e:
-        print(f"❌ 오류: {e}")
+        print(f"❌ 봇 실행 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
