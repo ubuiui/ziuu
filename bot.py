@@ -34,7 +34,13 @@ stocks = {
 
 # --- [DB 저장 및 로드 함수] ---
 def save_user_db(uid):
-    users_col.update_one(
+    users_col.update_one(...)
+    if result.acknowledged: # <--- 여기서 result가 없어 오류 발생
+        print(...)
+
+# 수정 후
+def save_user_db(uid):
+    result = users_col.update_one( # result를 먼저 받아와야 합니다.
         {"_id": uid},
         {"$set": {
             "money": user_money.get(uid, 1000),
@@ -45,6 +51,9 @@ def save_user_db(uid):
         }},
         upsert=True
     )
+    # 이제 안전하게 result를 사용합니다.
+    if result.acknowledged:
+        print(f"✅ 유저 {uid} 데이터 DB 저장 완료!")
 
 def load_all_data():
     global user_money, user_stocks, user_names, attendance_data, user_stats
