@@ -850,11 +850,19 @@ async def 데이터(ctx):
 # --- 유튜브 실시간 방송 감지 태스크 ---
 @tasks.loop(minutes=10)
 async def check_youtube_live():
-    # 주가 변동 로직
-    for name in stocks:
-        stocks[name] += random.randint(-1000000, 1000000)
-        if stocks[name] < 1000: 
-            stocks[name] = 1000
+   @tasks.loop(minutes=10) # 10분마다 변동
+async def update_stocks():
+    for stock in stocks:
+        # 1. 조금씩 오르는 기본값 (기본 상승폭)
+        change_rate = random.uniform(0.98, 1.05) # 2% 하락 ~ 5% 상승 사이에서 조금씩 변동
+        
+        # 2. 5% 확률로 급등 (예: 20~50% 상승)
+        if random.random() < 0.05:
+            change_rate = random.uniform(1.20, 1.50)
+            
+        stocks[stock] = int(stocks[stock] * change_rate)
+    
+    save_data() # 데이터 저장 함수 호출
             
     global IS_LIVE_NOW
     if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: return
