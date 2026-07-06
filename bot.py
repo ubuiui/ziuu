@@ -4,6 +4,7 @@ from discord.ext import commands, tasks
 from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
+import certifi
 
 # --- [초기 설정] ---
 intents = discord.Intents.default()
@@ -13,7 +14,7 @@ intents.presences = True        # 봇 상태 표시를 위해 필수
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # --- [DB 및 데이터 초기화] ---
-client = MongoClient(os.environ.get('MONGO_URI'))
+client = MongoClient(os.environ.get('MONGO_URI'), tlsCAFile=certifi.where())
 db = client["stock_game"]
 users_col = db["users"] # 모든 유저 데이터는 이 컬렉션에 저장됨
 
