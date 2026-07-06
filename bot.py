@@ -1,5 +1,8 @@
-import os, sys, asyncio, datetime, random, json, urllib.request # 여기 추가
+import os, sys, asyncio, datetime, random, json, urllib.request
 import discord
+from discord.ext import commands, tasks
+from flask import Flask
+from threading import Thread
 
 # --- [초기 설정] ---
 intents = discord.Intents.default()
