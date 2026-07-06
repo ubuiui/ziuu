@@ -38,6 +38,36 @@ app = Flask('')
 @app.route('/')
 def home(): return "OK", 200
 
+# --- [주식 변동 시스템] ---
+@tasks.loop(minutes=10)
+async def update_stocks():
+    for name in stocks:
+        # 기본 변동: -10% ~ +15%
+        change = random.uniform(-0.10, 0.15)
+        
+        # 5% 확률로 급등주 이벤트 발생
+        if random.random() < 0.05:
+            change = 0.50
+            
+        stocks[name] = int(stocks[name] * (1 + change))
+        # 최소 가격 1,000원 유지
+        if stocks[name] < 1000: stocks[name] = 1000
+    
+    # 공지 채널에 업데이트 알림 (NOTICE_CHANNEL_ID 필요)
+    channel = bot.get_channel(NOTICE_CHANNEL_ID)
+    if channel:
+        await channel.send("📢 **주식 시장이 10분 간격으로 갱신되었습니다!** `!주식`으로 확인하세요.")
+
+# [기존 주식 명령어를 아래로 교체]
+@bot.command()
+async def 주식(ctx):
+    msg = ""
+    for name, price in stocks.items():
+        # 급등주 표시
+        status = "🔥 급등" if price > 50000 else " " # 예시 로직
+        msg += f"📈 {name}: {price:,}원 {status}\n"
+    await ctx.send(f"📊 **현재 주식 시장**\n{msg}\n사용법: `!매수 [종목명] [수량]`")
+
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
 # ==========================================
@@ -48,11 +78,23 @@ async def 주식(ctx):
 
 @bot.command()
 async def 매수(ctx, name: str, qty: int):
-    if name not in stocks or qty <= 0: return await ctx.send("없는 종목이거나 수량이 잘못되었습니다.")
+    if name not in stocks or qty <= 0:
+        return await ctx.send("❌ 존재하지 않는 종목이거나 잘못된 수량입니다.")
+    
     cost = stocks[name] * qty
-    if user_money.get(ctx.author.id, 1000) < cost: return await ctx.send("❌ 잔액 부족!")
+    if user_money.get(ctx.author.id, 1000) < cost:
+        return await ctx.send("❌ 잔액이 부족합니다!")
+    
+    # 자산 차감
     user_money[ctx.author.id] -= cost
-    await ctx.send(f"✅ {name} {qty}주 매수 완료!")
+    
+    # 주식 데이터 갱신 (딕셔너리가 없으면 생성)
+    if ctx.author.id not in user_stocks:
+        user_stocks[ctx.author.id] = {}
+    
+    user_stocks[ctx.author.id][name] = user_stocks[ctx.author.id].get(name, 0) + qty
+    
+    await ctx.send(f"✅ {name} {qty}주 매수 완료! (현재 잔액: {user_money[ctx.author.id]:,}원)")
 
 # --- 보유 주식 확인 기능 ---
 @bot.command()
@@ -875,6 +917,7 @@ async def on_ready():
     print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
     if not check_youtube_live.is_running(): check_youtube_live.start()
     if not treasure_event.is_running(): treasure_event.start() # 이 줄 추가!
+    update_stocks.start()
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
