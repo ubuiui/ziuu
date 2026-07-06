@@ -849,21 +849,20 @@ async def 데이터(ctx):
 
 # --- 유튜브 실시간 방송 감지 태스크 ---
 @tasks.loop(minutes=10)
-async def check_youtube_live():
-   @tasks.loop(minutes=10) # 10분마다 변동
 async def update_stocks():
+    # 들여쓰기를 반드시 위 @tasks.loop 바로 아래에 맞춰주세요.
     for stock in stocks:
-        # 1. 조금씩 오르는 기본값 (기본 상승폭)
-        change_rate = random.uniform(0.98, 1.05) # 2% 하락 ~ 5% 상승 사이에서 조금씩 변동
+        # 기본 변동: -2% ~ +5%
+        change_rate = random.uniform(0.98, 1.05)
         
-        # 2. 5% 확률로 급등 (예: 20~50% 상승)
+        # 5% 확률로 급등 (20% ~ 50% 상승)
         if random.random() < 0.05:
             change_rate = random.uniform(1.20, 1.50)
             
         stocks[stock] = int(stocks[stock] * change_rate)
     
-    save_data() # 데이터 저장 함수 호출
-            
+    save_data() # 변경된 데이터 저장
+
     global IS_LIVE_NOW
     if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: return
     
@@ -951,20 +950,14 @@ async def 회수(ctx, m: discord.Member, a: int):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# --- 마지막 실행 블록 ---
+# --- 마지막 실행 블록 (여기부터 파일 끝까지 아래 내용만 남기세요) ---
+
 async def main():
     token = os.environ.get('BOT_TOKEN')
-    if not token:
-        print("❌ 에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
-        return 
-    try:
+    if token:
         await bot.start(token)
-    except Exception as e:
-        print(f"❌ 봇 실행 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
-    server_thread.daemon = True
-    server_thread.start()
+    Thread(target=lambda: Flask('').run(host='0.0.0.0', port=port)).start()
     asyncio.run(main())
