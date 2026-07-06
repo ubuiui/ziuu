@@ -56,39 +56,88 @@ async def 매수(ctx, name: str, qty: int):
     user_money[ctx.author.id] -= cost
     await ctx.send(f"✅ {name} {qty}주 매수 완료!")
 
+# --- 보유 주식 확인 기능 ---
+@bot.command()
+async def 내주식(ctx):
+    uid = ctx.author.id
+    my_stocks = user_stocks.get(uid, {})
+    # 0주인 종목은 제외하고 보여주기
+    active_stocks = {name: qty for name, qty in my_stocks.items() if qty > 0}
+    
+    if not active_stocks:
+        return await ctx.send("📭 보유 중인 주식이 없습니다.")
+    
+    msg = f"📂 **{ctx.author.name}님의 보유 현황**\n"
+    total_val = 0
+    for name, qty in active_stocks.items():
+        price = stocks.get(name, 0)
+        value = price * qty
+        total_val += value
+        msg += f"- {name}: {qty}주 (현재가: {price:,}원, 평가금액: {value:,}원)\n"
+    
+    msg += f"\n💰 **총 평가 자산: {total_val:,}원**"
+    await ctx.send(msg)
+
+# --- 주식 매도 기능 ---
+@bot.command()
+async def 매도(ctx, name: str, qty: int):
+    uid = ctx.author.id
+    my_stocks = user_stocks.get(uid, {})
+    
+    if name not in my_stocks or my_stocks[name] < qty:
+        return await ctx.send(f"❌ 해당 종목을 {qty}주만큼 보유하고 있지 않습니다.")
+    if qty <= 0:
+        return await ctx.send("⚠️ 매도 수량은 1주 이상이어야 합니다.")
+    
+    sale_price = stocks[name] * qty
+    my_stocks[name] -= qty
+    user_money[uid] = user_money.get(uid, 1000) + sale_price
+    
+    await ctx.send(f"✅ {name} {qty}주를 {sale_price:,}원에 매도 완료했습니다! (현재 잔액: {user_money[uid]:,}원)")
+
 @bot.command()
 async def 강화(ctx):
     uid = ctx.author.id
-    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0})
-    cost = (stat["強化"] + 1) * 5000
-    if user_money.get(uid, 1000) < cost: return await ctx.send(f"❌ 비용 부족!")
-    if random.random() < 0.6:
-        stat["強化"] += 1; stat["atk"] += 5
-        user_money[uid] -= cost
-        await ctx.send(f"✨ 강화 성공! (공격력: {stat['atk']}, 강화: {stat['強化']})")
+    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+    if stat["強化"] >= 15: return await ctx.send("최대 강화 단계입니다!")
+    cost = (stat["強化"] + 1) * 10000
+    success_rate = max(0.8 - (stat["強化"] * 0.05), 0.1)
+    if user_money.get(uid, 0) < cost: return await ctx.send("돈이 부족합니다!")
+    user_money[uid] -= cost
+    if random.random() < success_rate:
+        stat["強化"] += 1; stat["atk"] += 10
+        await ctx.send(f"✨ 강화 성공! (현재 단계: +{stat['強化']}, 공격력: {stat['atk']})")
     else:
-        stat["強化"] = 0; user_money[uid] -= cost
-        await ctx.send("💥 강화 실패! (초기화)")
+        stat["強化"] = max(0, stat["強化"] - 1)
+        await ctx.send(f"💥 강화 실패! 단계가 하락했습니다. (현재 단계: +{stat['強化']})")
 
 @bot.command()
 async def 던전(ctx):
     uid = ctx.author.id
-    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0})
-    boss_hp = 100 + (stat["lvl"] * 20)
-    if stat["atk"] >= boss_hp:
-        reward = stat["lvl"] * 5000
-        user_money[uid] = user_money.get(uid, 1000) + reward
-        stat["lvl"] += 1
-        await ctx.send(f"⚔️ 던전 클리어! 보상 {reward:,}원 (Lv.{stat['lvl']})")
-    else: await ctx.send(f"☠️ 던전 실패! (공격력 부족)")
+    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+    needed_atk = stat["dungeon_floor"] * 50
+    if stat["atk"] < needed_atk:
+        return await ctx.send(f"☠️ 던전 입장 실패! {stat['dungeon_floor']}층을 깨려면 공격력 {needed_atk}이 필요합니다.")
+    stat["dungeon_floor"] += 1
+    reward = stat["dungeon_floor"] * 20000
+    user_money[uid] = user_money.get(uid, 1000) + reward
+    await ctx.send(f"⚔️ 던전 {stat['dungeon_floor']-1}층 정복 완료! 보상 {reward:,}원 획득! (다음 목표: {stat['dungeon_floor']}층)")
 
-@bot.command()
-async def 보물찾기(ctx):
-    if random.random() < 0.3:
-        reward = random.randint(5000, 50000)
-        user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) + reward
-        await ctx.send(f"💎 보물 발견! +{reward:,}원")
-    else: await ctx.send("💨 꽝!")
+@tasks.loop(hours=1.5)
+async def treasure_event():
+    channel = bot.get_channel(NOTICE_CHANNEL_ID) 
+    if not channel: return
+    msg = await channel.send("💎 **[보물 이벤트]** 채팅창 어딘가에 보물이 나타났습니다! 1분 내에 ✋ 이모지를 누르는 선착순 1명에게 보상을 드립니다!")
+    await msg.add_reaction("✋")
+    def check(reaction, user):
+        return reaction.message.id == msg.id and str(reaction.emoji) == "✋" and not user.bot
+    try:
+        reaction, user = await bot.wait_for('reaction_add', timeout=60.0, check=check)
+        reward = random.randint(50000, 200000)
+        user_money[user.id] = user_money.get(user.id, 1000) + reward
+        await channel.send(f"🎉 **{user.name}**님이 보물을 선점하여 {reward:,}원을 획득했습니다!")
+    except:
+        await channel.send("💨 아쉽게도 아무도 보물을 가져가지 못했습니다.")
 
 # --------------------
 
@@ -794,10 +843,14 @@ async def 데이터(ctx):
 
 # --- 유튜브 실시간 방송 감지 태스크 ---
 @tasks.loop(minutes=5)
+@tasks.loop(minutes=10) # 10~30분 사이인 20분으로 설정
 async def check_youtube_live():
+  # 주가 변동 로직 수정 (-1,000,000 ~ 1,000,000 사이 변동)
     for name in stocks:
-        stocks[name] += random.randint(-1000, 1000)
-        if stocks[name] < 1000: stocks[name] = 1000
+        stocks[name] += random.randint(-1000000, 1000000)
+        # 가격이 1000원 밑으로 떨어지지 않게 방어
+        if stocks[name] < 1000: 
+            stocks[name] = 1000
     global IS_LIVE_NOW
     if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: return
     def fetch_html():
@@ -821,6 +874,7 @@ async def check_youtube_live():
 async def on_ready():
     print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
     if not check_youtube_live.is_running(): check_youtube_live.start()
+    if not treasure_event.is_running(): treasure_event.start() # 이 줄 추가!
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
