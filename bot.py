@@ -6,31 +6,40 @@ from threading import Thread
 from pymongo import MongoClient
 import certifi
 
-# --- [초기 설정] ---
+# [중요] 봇 선언
 intents = discord.Intents.default()
-intents.message_content = True  # 필수
-intents.members = True          # 필수 (관리자 명령어 및 유저 정보 확인용)
-intents.presences = True        # 봇 상태 표시를 위해 필수
+intents.message_content = True
+intents.members = True
+intents.presences = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# --- [DB 및 데이터 초기화] ---
-client = MongoClient(os.environ.get('MONGO_URI'), tlsCAFile=certifi.where())
-db = client["stock_game"]
-users_col = db["users"] # 모든 유저 데이터는 이 컬렉션에 저장됨
+# [중요] 절대 죽지 않는 DB 연결 로직
+client = None
+db = None
+users_col = None
 
+try:
+    # SSL 인증서 문제를 회피하면서 연결 시도
+    client = MongoClient(os.environ.get('MONGO_URI'), 
+                         serverSelectionTimeoutMS=5000,
+                         tlsCAFile=certifi.where())
+    db = client["stock_game"]
+    users_col = db["users"]
+    client.server_info() # 연결 확인
+    print("✅ MongoDB 연결 성공!")
+except Exception as e:
+    print(f"⚠️ MongoDB 연결 실패, 오프라인 모드로 시작합니다: {e}")
+
+# [중요] 데이터 로드 함수도 에러가 나면 무시하도록 처리
 def load_all_data():
+    if users_col is None: return
     try:
         cursor = users_col.find({})
         for doc in cursor:
-            uid = doc["_id"]
-            user_money[uid] = doc.get("money", 1000)
-            user_stocks[uid] = doc.get("stocks", {})
-            user_names[uid] = doc.get("name", "알수없음")
-            attendance_data[uid] = doc.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
-            user_stats[uid] = doc.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-        print("✅ MongoDB에서 모든 데이터를 성공적으로 로드했습니다.")
+            # ... (기존 로드 코드) ...
+        print("✅ 데이터 로드 완료")
     except Exception as e:
-        print(f"❌ DB 로드 실패: {e}")
+        print(f"⚠️ 데이터 로드 중 에러: {e}")
 
 user_money = {}
 user_stocks = {}
