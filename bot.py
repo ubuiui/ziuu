@@ -1034,7 +1034,6 @@ async def 말해(ctx, channel: discord.TextChannel, *, message: str):
     # 2. 명령어 입력한 메시지 삭제 (깔끔하게 흔적 지움)
     await ctx.message.delete()
 
-# --- 👑 관리자 입금 시스템 ---
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 정보(ctx, m: discord.Member = None):
@@ -1088,21 +1087,43 @@ async def 유저정보(ctx, m: discord.Member):
     
     await ctx.send(embed=embed)
 
-# --- 👑 관리자 회수 시스템 ---
+# --- 👑 관리자 전용: 자산 지급 ---
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 지급(ctx, m: discord.Member, a: int):
+    uid = m.id
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 데이터 업데이트
+    user_money[uid] = user_money.get(uid, 1000) + a
+    user_names[uid] = m.name
+    
+    # DB 반영
+    save_user_db(uid)
+    
+    embed = discord.Embed(title="💰 관리자 자산 관리 [지급]", color=discord.Color.green())
+    embed.description = f"🏦 지급 대상: {m.mention}\n📈 지급된 금액: `+{a:,}원`\n🕒 처리 시간: `{now}`\n📊 최종 보유 자산: `{user_money[uid]:,}원`"
+    embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 DB 연동 완료")
+    await ctx.send(embed=embed)
+
+# --- 👑 관리자 전용: 자산 회수 ---
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 회수(ctx, m: discord.Member, a: int):
-    current_money = user_money.get(m.id, 1000)
-    user_money[m.id] = current_money - a
-    user_names[m.id] = m.name
+    uid = m.id
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    current_money = user_money.get(uid, 1000)
+    user_money[uid] = current_money - a
+    user_names[uid] = m.name
+    
+    # DB 반영
+    save_user_db(uid)
     
     embed = discord.Embed(title="🛑 관리자 자산 관리 [회수]", color=discord.Color.red())
-    embed.description = f"🏦 대상자: {m.mention}\n📉 차감된 금액: `-{a:,}원`\n📊 최종 보유 자산: `{user_money[m.id]:,}원`"
-    embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
+    embed.description = f"🏦 대상자: {m.mention}\n📉 차감된 금액: `-{a:,}원`\n🕒 처리 시간: `{now}`\n📊 최종 보유 자산: `{user_money[uid]:,}원`"
+    embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 DB 연동 완료")
     await ctx.send(embed=embed)
-    
-    # [추가] 반드시 이 줄을 넣어야 DB에 반영됩니다!
-    save_user_db(m.id)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
