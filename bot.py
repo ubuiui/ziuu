@@ -841,21 +841,24 @@ async def 데이터(ctx):
 
 # --- 유튜브 실시간 방송 감지 태스크 ---
 @tasks.loop(minutes=5)
-@tasks.loop(minutes=10) # 10~30분 사이인 20분으로 설정
+# 기존의 중복된 데코레이터 부분을 아래와 같이 수정하세요
+@tasks.loop(minutes=10) # 10분 주기로 통합
 async def check_youtube_live():
-  # 주가 변동 로직 수정 (-1,000,000 ~ 1,000,000 사이 변동)
+    # 주가 변동 로직
     for name in stocks:
         stocks[name] += random.randint(-1000000, 1000000)
-        # 가격이 1000원 밑으로 떨어지지 않게 방어
         if stocks[name] < 1000: 
             stocks[name] = 1000
+            
     global IS_LIVE_NOW
     if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: return
+    
     def fetch_html():
         try:
             req = urllib.request.Request(YOUTUBE_CHANNEL_URL, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response: return response.read().decode('utf-8')
         except: return ""
+        
     loop = asyncio.get_event_loop()
     html = await loop.run_in_executor(None, fetch_html)
     if html:
