@@ -17,6 +17,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # --- [데이터 저장소] ---
 user_money = {}
+user_stocks = {}
 game_states = {}
 attendance_data = {}
 user_names = {}
@@ -871,6 +872,7 @@ async def check_youtube_live():
         elif not is_live: IS_LIVE_NOW = False
 
 @bot.event
+
 async def on_ready():
     print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
     if not check_youtube_live.is_running(): check_youtube_live.start()
@@ -895,6 +897,28 @@ async def 입금(ctx, m: discord.Member, a: int):
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
     await ctx.send(embed=embed)
 
+# --- 👑 관리자 전용: 유저 전체 데이터 조회 ---
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 유저정보(ctx, m: discord.Member):
+    uid = m.id
+    # 데이터 가져오기 (없는 경우 기본값 설정)
+    money = user_money.get(uid, 1000)
+    stats = user_stats.get(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+    my_stocks = user_stocks.get(uid, {}) # 주의: 코드에 user_stocks 선언이 필요합니다
+    
+    # 주식 요약
+    stock_summary = "\n".join([f"- {name}: {qty}주" for name, qty in my_stocks.items() if qty > 0])
+    if not stock_summary: stock_summary = "보유 주식 없음"
+
+    embed = discord.Embed(title=f"📋 {m.name}님의 상세 정보", color=discord.Color.blue())
+    embed.add_field(name="💰 자산", value=f"{money:,}원", inline=True)
+    embed.add_field(name="⚔️ 전투 스탯", value=f"공격력: {stats['atk']}\n강화: +{stats['強化']}\n던전층수: {stats['dungeon_floor']}층", inline=True)
+    embed.add_field(name="📈 보유 주식", value=stock_summary, inline=False)
+    embed.set_footer(text=f"조회 관리자: {ctx.author.name}")
+    
+    await ctx.send(embed=embed)
+
 # --- 👑 관리자 회수 시스템 ---
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -912,19 +936,26 @@ async def 회수(ctx, m: discord.Member, a: int):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
+# 기존의 main() 함수와 if __name__ == "__main__": 블록을 전부 지우고 아래로 교체하세요.
+
 async def main():
     token = os.environ.get('BOT_TOKEN')
     if not token or len(token.strip()) < 10:
-        while True: await asyncio.sleep(3600)
+        print("❌ 에러: BOT_TOKEN이 설정되지 않았거나 토큰 형식이 올바르지 않습니다.")
+        return 
+    
     try:
-        async with bot: await bot.start(token)
-    except:
-        while True: await asyncio.sleep(3600)
+        print("🚀 봇을 실행합니다...")
+        await bot.start(token)
+    except Exception as e:
+        print(f"❌ 봇 실행 중 치명적 오류 발생: {e}")
 
 if __name__ == "__main__":
-    from threading import Thread
+    # 플라스크 서버(웹 서버 유지용)
     port = int(os.environ.get("PORT", 10000))
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
     server_thread.start()
+    
+    # 봇 시작
     asyncio.run(main())
