@@ -1,39 +1,64 @@
-import os, sys, asyncio, datetime, random, json, urllib.request
+import os, asyncio, datetime, random
 import discord
 from discord.ext import commands, tasks
 from flask import Flask
 from threading import Thread
+from pymongo import MongoClient
 
 # --- [초기 설정] ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.presences = True
-intents.reactions = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# --- [DB 및 데이터 초기화] ---
+client = MongoClient(os.environ.get('MONGO_URI'))
+db = client["stock_game"]
+users_col = db["users"] # 모든 유저 데이터는 이 컬렉션에 저장됨
 
-# --- [데이터 저장소] ---
 user_money = {}
 user_stocks = {}
-game_states = {}
-attendance_data = {}
 user_names = {}
-user_stats = {}
+attendance_data = {}
+game_states = {}
 gift_cooldowns = {}
 disaster_cooldowns = {}
-hot_stocks = set ()
+user_stats = {}
+
 stocks = {
-    "예빈닉스": 120000, "지유엔터": 15000, "헬프미": 8000, 
+    "예빈닉스": 123000, "지유엔터": 15000, "헬프미": 8000, 
     "명철수산": 12000, "찬우상사": 9500, "예원데이터": 25000, 
     "민지유건설": 18000, "피브테크": 7000, "루카드림": 13000, "우뱅미디어": 11000,
     "어둠반도체": 19000, "여름전자": 80200, "해나물류": 3000, "헤응인터내셔널": 1000
-
 }
 
-def save_data():
-    with open("data.json", "w", encoding="utf-8") as f:
-        json.dump({"money": user_money, "stocks": user_stocks}, f, ensure_ascii=False)
+# --- [DB 저장 및 로드 함수] ---
+def save_user_db(uid):
+    users_col.update_one(
+        {"_id": uid},
+        {"$set": {
+            "money": user_money.get(uid, 1000),
+            "stocks": user_stocks.get(uid, {}),
+            "name": user_names.get(uid, "알수없음"),
+            "attendance": attendance_data.get(uid, {"streak": 0, "total": 0, "last_date": ""}),
+            "stats": user_stats.get(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+        }},
+        upsert=True
+    )
+
+def load_all_data():
+    global user_money, user_stocks, user_names, attendance_data, user_stats
+    for data in users_col.find():
+        uid = data["_id"]
+        user_money[uid] = data.get("money", 1000)
+        user_stocks[uid] = data.get("stocks", {})
+        user_names[uid] = data.get("name", "알수없음")
+        attendance_data[uid] = data.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
+        user_stats[uid] = data.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+    print("✅ MongoDB에서 모든 데이터를 성공적으로 로드했습니다.")
+
+# [기존 코드의 나머지 부분은 그대로 유지하되, 각 명령어 함수 끝에 save_user_db(ctx.author.id)를 추가하세요]
+# 예: !매수 함수 마지막에 save_user_db(ctx.author.id) 추가
 
 # --- [설정 공간] ---
 YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
@@ -906,7 +931,11 @@ async def 데이터(ctx):
 
 @bot.event
 async def on_ready():
+    # 봇 시작 시 DB에서 데이터를 먼저 불러옵니다.
+    load_all_data() 
     print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
+    
+    # 루프 작업 시작
     if not update_stocks.is_running(): update_stocks.start()
     if not treasure_event.is_running(): treasure_event.start()
 
