@@ -1,7 +1,4 @@
-import os, sys, asyncio, datetime, random
-import urllib.request
-import urllib.parse
-import urllib.error
+import os, sys, asyncio, datetime, random, json
 import discord
 from flask import Flask
 from discord.ext import commands, tasks
