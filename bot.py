@@ -840,9 +840,7 @@ async def 데이터(ctx):
     await ctx.send(f"📋 **{ctx.author.name}**님의 현재 자고 있는 자산은 **{money:,}원**입니다.")
 
 # --- 유튜브 실시간 방송 감지 태스크 ---
-@tasks.loop(minutes=5)
-# 기존의 중복된 데코레이터 부분을 아래와 같이 수정하세요
-@tasks.loop(minutes=10) # 10분 주기로 통합
+@tasks.loop(minutes=10)
 async def check_youtube_live():
     # 주가 변동 로직
     for name in stocks:
