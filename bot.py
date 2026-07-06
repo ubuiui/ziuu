@@ -1035,8 +1035,6 @@ async def 정보(ctx, m: discord.Member = None):
     
     await ctx.send(embed=embed)
 
-    save_user_db(uid)
-
 
 # --- 👑 관리자 전용: 유저 전체 데이터 조회 ---
 @bot.command()
@@ -1071,10 +1069,9 @@ async def 회수(ctx, m: discord.Member, a: int):
     embed = discord.Embed(title="🛑 관리자 자산 관리 [회수]", color=discord.Color.red())
     embed.description = f"🏦 대상자: {m.mention}\n📉 차감된 금액: `-{a:,}원`\n📊 최종 보유 자산: `{user_money[m.id]:,}원`"
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
+    await ctx.send(embed=embed)
 
     save_user_db(m.id)
-
-    await ctx.send(embed=embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
