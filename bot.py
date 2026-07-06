@@ -994,12 +994,12 @@ async def 데이터(ctx):
     await ctx.send(f"📋 **{ctx.author.name}**님의 현재 자고 있는 자산은 **{money:,}원**입니다.")
 
 
-# 봇이 켜질 때 자동 실행
 @bot.event
 async def on_ready():
-    load_all_data()
-    print(f"✅ {bot.user} 온라인! 봇이 모든 준비를 마쳤습니다.")
-    
+    print(f"✅ {bot.user} 온라인! 데이터를 불러오는 중...")
+    load_all_data() # 데이터 로드
+    print("✅ 모든 명령어와 데이터가 준비되었습니다.")
+
     # 루프 작업 시작
     if not update_stocks.is_running(): update_stocks.start()
     if not treasure_event.is_running(): treasure_event.start()
@@ -1085,7 +1085,8 @@ async def 회수(ctx, m: discord.Member, a: int):
     embed.description = f"🏦 대상자: {m.mention}\n📉 차감된 금액: `-{a:,}원`\n📊 최종 보유 자산: `{user_money[m.id]:,}원`"
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 연동 완료")
     await ctx.send(embed=embed)
-
+    
+    # [추가] 반드시 이 줄을 넣어야 DB에 반영됩니다!
     save_user_db(m.id)
 
 @bot.command()
