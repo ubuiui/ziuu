@@ -37,15 +37,15 @@ app = Flask('')
 def home(): return "OK", 200
 
 # --- [주식 변동 시스템] ---
+# 10분마다 실행되는 주식 변동 루프 (이렇게 딱 맞추세요)
 @tasks.loop(minutes=10)
 async def update_stocks():
-    for name in stocks:
-        # 기본 변동: -10% ~ +15%
-        change = random.uniform(-0.10, 0.15)
-        
-        # 5% 확률로 급등주 이벤트 발생
+    for stock in stocks:
+        change_rate = random.uniform(0.98, 1.05)
         if random.random() < 0.05:
-            change = 0.50
+            change_rate = random.uniform(1.20, 1.50)
+        stocks[stock] = int(stocks[stock] * change_rate)
+    save_data()
             
         stocks[name] = int(stocks[name] * (1 + change))
         # 최소 가격 1,000원 유지
@@ -850,18 +850,12 @@ async def 데이터(ctx):
 # --- 유튜브 실시간 방송 감지 태스크 ---
 @tasks.loop(minutes=10)
 async def update_stocks():
-    # 들여쓰기를 반드시 위 @tasks.loop 바로 아래에 맞춰주세요.
     for stock in stocks:
-        # 기본 변동: -2% ~ +5%
         change_rate = random.uniform(0.98, 1.05)
-        
-        # 5% 확률로 급등 (20% ~ 50% 상승)
         if random.random() < 0.05:
             change_rate = random.uniform(1.20, 1.50)
-            
         stocks[stock] = int(stocks[stock] * change_rate)
-    
-    save_data() # 변경된 데이터 저장
+    save_data()
 
     global IS_LIVE_NOW
     if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: return
@@ -885,12 +879,10 @@ async def update_stocks():
         elif not is_live: IS_LIVE_NOW = False
 
 @bot.event
-
 async def on_ready():
     print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
-    if not check_youtube_live.is_running(): check_youtube_live.start()
-    if not treasure_event.is_running(): treasure_event.start() # 이 줄 추가!
-    update_stocks.start()
+    if not update_stocks.is_running(): update_stocks.start()
+    if not treasure_event.is_running(): treasure_event.start()
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
@@ -949,8 +941,6 @@ async def 회수(ctx, m: discord.Member, a: int):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
-
-# --- 마지막 실행 블록 (여기부터 파일 끝까지 아래 내용만 남기세요) ---
 
 async def main():
     token = os.environ.get('BOT_TOKEN')
