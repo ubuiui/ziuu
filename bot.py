@@ -129,79 +129,6 @@ async def 매도(ctx, name: str, qty: int):
     
     await ctx.send(f"✅ {name} {qty}주를 {sale_price:,}원에 매도 완료했습니다! (현재 잔액: {user_money[uid]:,}원)")
 
-@bot.command()
-async def 강화(ctx):
-    uid = ctx.author.id
-    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-    if stat["強化"] >= 15: return await ctx.send("최대 강화 단계입니다!")
-    cost = (stat["強化"] + 1) * 10000
-    success_rate = max(0.8 - (stat["強化"] * 0.05), 0.1)
-    if user_money.get(uid, 0) < cost: return await ctx.send("돈이 부족합니다!")
-    user_money[uid] -= cost
-    if random.random() < success_rate:
-        stat["強化"] += 1; stat["atk"] += 10
-        await ctx.send(f"✨ 강화 성공! (현재 단계: +{stat['強化']}, 공격력: {stat['atk']})")
-    else:
-        stat["強化"] = max(0, stat["強化"] - 1)
-        await ctx.send(f"💥 강화 실패! 단계가 하락했습니다. (현재 단계: +{stat['強化']})")
-
-# --- [스태미너 및 상태 회복 시스템] ---
-@tasks.loop(minutes=5) # 5분마다 스태미너 5 회복
-async def recover_stamina():
-    for uid in user_stats:
-        if user_stats[uid].get("stamina", 30) < 30:
-            user_stats[uid]["stamina"] = min(30, user_stats[uid]["stamina"] + 5)
-    save_data()
-
-@bot.event
-async def on_ready():
-    recover_stamina.start()
-    print("🚀 봇 실행 및 시스템 가동 중...")
-
-# 던전 로직 (스태미너 및 내구도 소모 예시)
-@bot.command()
-async def 던전(ctx):
-    uid = ctx.author.id
-    if uid not in user_stats: return await ctx.send("먼저 장비를 갖추세요!")
-    
-    stats = user_stats[uid]
-    if stats["stamina"] < 10: return await ctx.send("⚡ 스태미나가 부족합니다.")
-    if stats["atk"]["dur"] <= 0: return await ctx.send("🛠️ 내구도가 없습니다.")
-    
-    # 전투 계산 및 소모
-    stats["stamina"] -= 10
-    stats["atk"]["dur"] -= 5
-    await ctx.send(f"⚔️ 전투 완료! (남은 스태미나: {stats['stamina']}, 내구도: {stats['atk']['dur']})")
-
-# 5분마다 자동 회복 (on_ready에 recover_stamina.start() 추가 필수)
-@tasks.loop(minutes=5)
-async def recover_stamina():
-    for uid in user_stats:
-        user_stats[uid]["stamina"] = min(30, user_stats[uid]["stamina"] + 5)
-
-@bot.command()
-async def 파티던전(ctx, *members: discord.Member):
-    boss_hp = random.randint(100, 500)
-    boss_atk = random.randint(20, 50)
-    
-    await ctx.send(f"⚔️ 보스 출현! (HP: {boss_hp}) 전투를 시작합니다.")
-    
-    # 턴제 전투 로직
-    while boss_hp > 0:
-        for m in members:
-            damage = user_stats.get(m.id, {"atk": 10})["atk"]
-            boss_hp -= damage
-            await ctx.send(f"{m.name}의 공격! 보스에게 {damage} 데미지! (보스 HP: {boss_hp})")
-            if boss_hp <= 0: break
-        
-        if boss_hp > 0:
-            await ctx.send(f"보스의 반격! 파티원 전원에게 {boss_atk} 데미지!")
-            await asyncio.sleep(1)
-            
-    reward = boss_hp * 100 # 보상 분배
-    await ctx.send(f"🏆 승리! 수익금 {reward:,}원을 분배합니다.")
-    save_data()
-
 @tasks.loop(hours=1.5)
 async def treasure_event():
     channel = bot.get_channel(NOTICE_CHANNEL_ID) 
@@ -1017,7 +944,6 @@ async def 회수(ctx, m: discord.Member, a: int):
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 # --- 마지막 실행 블록 ---
-
 async def main():
     token = os.environ.get('BOT_TOKEN')
     if not token:
