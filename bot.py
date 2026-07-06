@@ -2,40 +2,92 @@ import os, sys, asyncio, datetime, random
 import urllib.request
 import urllib.parse
 import urllib.error
-
-# --- [필수 라이브러리 자동 설치] ---
-try:
-    import discord
-    from flask import Flask
-except ImportError:
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "discord.py", "flask"])
-    import discord
-    from flask import Flask
-
+import discord
+from flask import Flask
 from discord.ext import commands, tasks
+from threading import Thread
 
+# --- [초기 설정] ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
 intents.reactions = True
-
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# --- [데이터베이스 대용 메모리 저장소] ---
+# --- [데이터 저장소] ---
 user_money = {}
 game_states = {}
-attendance_data = {}  # {uid: {"streak": 연속일수, "total": 누적일수, "last_date": "YYYY-MM-DD"}}
-user_names = {}       # 랭킹 표시용 유저 이름 저장 {uid: name}
-
+attendance_data = {}
+user_names = {}
 gift_cooldowns = {}       
 disaster_cooldowns = {}   
+# [신규 추가 데이터]
+user_stats = {}  # {uid: {"atk": 10, "lvl": 1, "強化": 0}}
+stocks = {
+    "예빈전자": 10000, "지유엔터": 15000, "헬프미": 8000, 
+    "명철물산": 12000, "찬우상사": 9500, "희진바이오": 25000, 
+    "민지유건설": 18000, "파브테크": 7000, "코딩드림": 13000, "꿀잼미디어": 11000
+}
 
 # --- [설정 공간] ---
 YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
 NOTICE_CHANNEL_ID = 1520830878513762375  
 IS_LIVE_NOW = False 
+app = Flask('')
+@app.route('/')
+def home(): return "OK", 200
+
+# ==========================================
+# [신규 기능: 주식, 강화, 던전, 보물찾기]
+# ==========================================
+@bot.command()
+async def 주식(ctx):
+    msg = "\n".join([f"📈 {name}: {price:,}원" for name, price in stocks.items()])
+    await ctx.send(f"📊 **현재 주식 시장**\n{msg}\n\n사용법: `!매수 [종목명] [수량]`")
+
+@bot.command()
+async def 매수(ctx, name: str, qty: int):
+    if name not in stocks or qty <= 0: return await ctx.send("없는 종목이거나 수량이 잘못되었습니다.")
+    cost = stocks[name] * qty
+    if user_money.get(ctx.author.id, 1000) < cost: return await ctx.send("❌ 잔액 부족!")
+    user_money[ctx.author.id] -= cost
+    await ctx.send(f"✅ {name} {qty}주 매수 완료!")
+
+@bot.command()
+async def 강화(ctx):
+    uid = ctx.author.id
+    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0})
+    cost = (stat["強化"] + 1) * 5000
+    if user_money.get(uid, 1000) < cost: return await ctx.send(f"❌ 비용 부족!")
+    if random.random() < 0.6:
+        stat["強化"] += 1; stat["atk"] += 5
+        user_money[uid] -= cost
+        await ctx.send(f"✨ 강화 성공! (공격력: {stat['atk']}, 강화: {stat['強化']})")
+    else:
+        stat["強化"] = 0; user_money[uid] -= cost
+        await ctx.send("💥 강화 실패! (초기화)")
+
+@bot.command()
+async def 던전(ctx):
+    uid = ctx.author.id
+    stat = user_stats.setdefault(uid, {"atk": 10, "lvl": 1, "強化": 0})
+    boss_hp = 100 + (stat["lvl"] * 20)
+    if stat["atk"] >= boss_hp:
+        reward = stat["lvl"] * 5000
+        user_money[uid] = user_money.get(uid, 1000) + reward
+        stat["lvl"] += 1
+        await ctx.send(f"⚔️ 던전 클리어! 보상 {reward:,}원 (Lv.{stat['lvl']})")
+    else: await ctx.send(f"☠️ 던전 실패! (공격력 부족)")
+
+@bot.command()
+async def 보물찾기(ctx):
+    if random.random() < 0.3:
+        reward = random.randint(5000, 50000)
+        user_money[ctx.author.id] = user_money.get(ctx.author.id, 1000) + reward
+        await ctx.send(f"💎 보물 발견! +{reward:,}원")
+    else: await ctx.send("💨 꽝!")
+
 # --------------------
 
 app = Flask('')
@@ -546,13 +598,13 @@ async def 소개팅(ctx, bet: int = None):
 
     # 소개팅 도중 일어날 수 있는 다양한 상황 대사 목록
     situations = [
-        "님은 긴장해서 물을 마시다가 상대방 옷에 다 쏟아 호감도가 대폭 하락했습니다! 💦",
-        "님이 약속 장소에 세련되고 멋있는 차를 타고 와서 호감도가 1 상승하였습니다! 🚗",
-        "님이 며칠 안 씻었는지 냄새가 진동을 하여 상대방이 코를 막아 소개팅 실패 위기입니다! 🤢",
-        "님이 식사를 허겁지겁 너무 쩝쩝거리며 먹어 상대방의 표정이 어두워집니다... 🥩",
-        "님의 유머 감각이 완벽 적중! 상대방이 귀엽다며 깔깔 웃어 호감도가 대폭 상승합니다! 🤣",
-        "님이 밥값을 계산할 때 화장실 간 척하며 은근슬쩍 커피도 안 사줘서 소개팅이 실패 쪽으로 기울어집니다! ☕",
-        "님이 화려하고 센스 넘치는 패션 코디로 나타나 첫인상 점수에서 압승을 거둡니다! ✨"
+        "님은 긴장해서 물을 마시다가 예빈이 옷에 다 쏟아 호감도가 대폭 하락했습니다! 💦",
+        "님이 약속 장소에 세련되고 멋있는 차를 타고 와서 예빈이의 호감도가 1 상승하였습니다! 🚗",
+        "님이 며칠 안 씻었는지 냄새가 진동을 하여 예빈이가 코를 막아 소개팅 실패 위기입니다! 🤢",
+        "님이 식사를 허겁지겁 너무 쩝쩝거리며 먹어 예빈이의 표정이 어두워집니다... 🥩",
+        "님의 유머 감각이 완벽 적중! 예빈이가 귀엽다며 깔깔 웃어 호감도가 대폭 상승합니다! 🤣",
+        "님이 밥값을 계산할 때 화장실 간 척하며 은근슬쩍 커피도 안 사줘서 예빈이와의 소개팅이 실패 쪽으로 기울어집니다! ☕",
+        "님이 화려하고 센스 넘치는 패션 코디로 나타나 예빈이와의 소개팅에서 첫인상 점수 압승을 거둡니다! ✨"
     ]
 
     # 참가자가 많든 적든, 스토리를 몇 번 굴려 실시간 상황을 연출
@@ -741,6 +793,9 @@ async def 데이터(ctx):
 # --- 유튜브 실시간 방송 감지 태스크 ---
 @tasks.loop(minutes=5)
 async def check_youtube_live():
+    for name in stocks:
+        stocks[name] += random.randint(-1000, 1000)
+        if stocks[name] < 1000: stocks[name] = 1000
     global IS_LIVE_NOW
     if not YOUTUBE_CHANNEL_URL or "http" not in YOUTUBE_CHANNEL_URL or not NOTICE_CHANNEL_ID: return
     def fetch_html():
