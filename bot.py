@@ -935,10 +935,12 @@ async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 # 기존의 main() 함수와 if __name__ == "__main__": 블록을 전부 지우고 아래로 교체하세요.
 
+# --- 마지막 실행 블록 ---
+
 async def main():
     token = os.environ.get('BOT_TOKEN')
-    if not token or len(token.strip()) < 10:
-        print("❌ 에러: BOT_TOKEN이 설정되지 않았거나 토큰 형식이 올바르지 않습니다.")
+    if not token:
+        print("❌ 에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
         return 
     
     try:
@@ -948,7 +950,7 @@ async def main():
         print(f"❌ 봇 실행 중 치명적 오류 발생: {e}")
 
 if __name__ == "__main__":
-    # 플라스크 서버(웹 서버 유지용)
+    # 플라스크 서버
     port = int(os.environ.get("PORT", 10000))
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
