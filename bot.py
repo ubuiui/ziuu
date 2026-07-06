@@ -15,7 +15,6 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # [상단 데이터 저장소]
 # user_stats 구조를 상세화합니다.
 # 강화는 무기(atk), 체력(hp), 방어력(def) 별도로 관리합니다.
-user_stats = {} 
 # 예: {uid: {"atk": {"lvl": 0, "dur": 100}, "hp": {"lvl": 0}, "def": {"lvl": 0}, "stamina": 100}}
 
 # --- [데이터 저장소] ---
@@ -1023,16 +1022,24 @@ async def 회수(ctx, m: discord.Member, a: int):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# --- 마지막 실행 블록 (여기가 파일의 끝이어야 합니다) ---
+# --- 마지막 실행 블록 ---
+
 async def main():
     token = os.environ.get('BOT_TOKEN')
-    if not token: return
-    try: await bot.start(token)
-    except Exception as e: print(f"오류: {e}")
+    if not token:
+        print("❌ 에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
+        return 
+    
+    try:
+        print("🚀 봇을 실행합니다...")
+        await bot.start(token)
+    except Exception as e:
+        print(f"❌ 봇 실행 중 치명적 오류 발생: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
     server_thread.start()
+    
     asyncio.run(main())
