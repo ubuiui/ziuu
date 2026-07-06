@@ -17,6 +17,20 @@ client = MongoClient(os.environ.get('MONGO_URI'))
 db = client["stock_game"]
 users_col = db["users"] # 모든 유저 데이터는 이 컬렉션에 저장됨
 
+def load_all_data():
+    try:
+        cursor = users_col.find({})
+        for doc in cursor:
+            uid = doc["_id"]
+            user_money[uid] = doc.get("money", 1000)
+            user_stocks[uid] = doc.get("stocks", {})
+            user_names[uid] = doc.get("name", "알수없음")
+            attendance_data[uid] = doc.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
+            user_stats[uid] = doc.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+        print("✅ MongoDB에서 모든 데이터를 성공적으로 로드했습니다.")
+    except Exception as e:
+        print(f"❌ DB 로드 실패: {e}")
+
 user_money = {}
 user_stocks = {}
 user_names = {}
@@ -980,11 +994,11 @@ async def 데이터(ctx):
     await ctx.send(f"📋 **{ctx.author.name}**님의 현재 자고 있는 자산은 **{money:,}원**입니다.")
 
 
+# 봇이 켜질 때 자동 실행
 @bot.event
 async def on_ready():
-    # 봇 시작 시 DB에서 데이터를 먼저 불러옵니다.
-    load_all_data() 
-    print(f"✅ 디스코드 로그인 성공: {bot.user.name}")
+    load_all_data()
+    print(f"✅ {bot.user} 온라인! 봇이 모든 준비를 마쳤습니다.")
     
     # 루프 작업 시작
     if not update_stocks.is_running(): update_stocks.start()
@@ -1007,6 +1021,7 @@ async def 말해(ctx, channel: discord.TextChannel, *, message: str):
 
 # --- 👑 관리자 입금 시스템 ---
 @bot.command()
+@commands.has_permissions(administrator=True)
 async def 정보(ctx, m: discord.Member = None):
     m = m or ctx.author
     uid = m.id
