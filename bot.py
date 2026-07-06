@@ -943,7 +943,7 @@ async def main():
     if token:
         await bot.start(token)
 
-# --- 파일 가장 하단 (수정 후) ---
+# --- 파일 맨 아래쪽 (이것만 남기세요) ---
 if __name__ == "__main__":
     # Flask 서버를 별도 스레드에서 실행
     def run_flask():
