@@ -21,7 +21,9 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 user_money = {}
 user_stocks = {}
 game_states = {}
-user_stats = {}  # {uid: {"atk": 10, "lvl": 1, "強化": 0}}
+attendance_data = {}
+user_names = {}
+user_stats = {}
 stocks = {
     "예빈전자": 120000, "지유엔터": 15000, "헬프미": 8000, 
     "명철수산": 12000, "찬우상사": 9500, "예원데이터": 25000, 
@@ -1027,19 +1029,16 @@ async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 async def main():
     token = os.environ.get('BOT_TOKEN')
     if not token:
-        print("❌ 에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
+        print("❌ 에러: BOT_TOKEN 없음")
         return 
-    
     try:
-        print("🚀 봇을 실행합니다...")
         await bot.start(token)
     except Exception as e:
-        print(f"❌ 봇 실행 중 치명적 오류 발생: {e}")
+        print(f"❌ 오류: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     server_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
     server_thread.start()
-    
     asyncio.run(main())
