@@ -1,8 +1,5 @@
-import os, sys, asyncio, datetime, random, json, urllib.request
+import os, sys, asyncio, datetime, random, json, urllib.request # 여기 추가
 import discord
-from discord.ext import commands, tasks
-from flask import Flask
-from threading import Thread
 
 # --- [초기 설정] ---
 intents = discord.Intents.default()
@@ -939,16 +936,21 @@ async def 회수(ctx, m: discord.Member, a: int):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# --- 파일 가장 하단 ---
+# --- 마지막 실행 블록 (여기부터 파일 끝까지 아래 내용만 남기세요) ---
+
 async def main():
     token = os.environ.get('BOT_TOKEN')
-    if not token:
-        print("에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
-        return
-    await bot.start(token)
+    if token:
+        await bot.start(token)
 
+# --- 파일 가장 하단 (수정 후) ---
 if __name__ == "__main__":
-    # Flask 서버는 딱 한 번만 시작해야 합니다.
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port) # Thread 없이 직접 실행 권장
+    # Flask 서버를 별도 스레드에서 실행
+    def run_flask():
+        port = int(os.environ.get("PORT", 10000))
+        app.run(host='0.0.0.0', port=port)
+    
+    Thread(target=run_flask).start()
+    
+    # 디스코드 봇은 메인 스레드에서 실행
     asyncio.run(main())
