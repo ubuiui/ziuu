@@ -97,38 +97,39 @@ async def 매수(ctx, name: str, qty: int):
     if user_money.get(ctx.author.id, 1000) < cost:
         return await ctx.send("❌ 잔액이 부족합니다!")
     
-    # 자산 차감
     user_money[ctx.author.id] -= cost
     
-    # 주식 데이터 갱신
     if ctx.author.id not in user_stocks:
         user_stocks[ctx.author.id] = {}
     
-    user_stocks[ctx.author.id][name] = user_stocks[ctx.author.id].get(name, 0) + qty
+    # 평단가 계산 로직
+    current_data = user_stocks[ctx.author.id].get(name, {"qty": 0, "avg_price": 0})
+    total_qty = current_data["qty"] + qty
+    new_avg = ((current_data["qty"] * current_data["avg_price"]) + (qty * stocks[name])) / total_qty
     
-    await ctx.send(f"✅ {name} {qty}주 매수 완료! (현재 잔액: {user_money[ctx.author.id]:,}원)")
+    user_stocks[ctx.author.id][name] = {"qty": total_qty, "avg_price": int(new_avg)}
+    
+    await ctx.send(f"✅ {name} {qty}주 매수 완료! (평단가: {int(new_avg):,}원)")
 
 # --- 보유 주식 확인 기능 ---
 @bot.command()
 async def 내주식(ctx):
     uid = ctx.author.id
-    my_stocks = user_stocks.get(uid, {}) # 데이터 불러오기
+    my_stocks = user_stocks.get(uid, {})
     
-    # 만약 데이터가 비어있다면
     if not my_stocks:
         return await ctx.send("📉 현재 보유 중인 주식이 없습니다.")
     
-    # 보유한 주식 목록 문자열로 만들기
     msg = "💰 **보유 주식 목록**\n"
-    for name, qty in my_stocks.items():
-        if qty > 0: # 0주인 것은 제외
-            msg += f"- {name}: {qty}주\n"
+    for name, data in my_stocks.items():
+        if data["qty"] > 0:
+            current_price = stocks[name]
+            # 수익률 계산
+            profit = ((current_price - data["avg_price"]) / data["avg_price"]) * 100
+            profit_icon = "📈" if profit >= 0 else "📉"
+            msg += f"- **{name}**: {data['qty']}주 | 평단가: {data['avg_price']:,}원 | 수익률: {profit_icon} {profit:.2f}%\n"
             
-    # 전체 목록이 여전히 비어있다면
-    if msg == "💰 **보유 주식 목록**\n":
-        await ctx.send("📉 현재 보유 중인 주식이 없습니다.")
-    else:
-        await ctx.send(msg)
+    await ctx.send(msg)
 
 # --- 주식 매도 기능 ---
 @bot.command()
