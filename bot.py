@@ -20,7 +20,9 @@ game_states = {}
 attendance_data = {}
 user_names = {}
 user_stats = {}
-hot_stocks = set()
+gift_cooldowns = {}
+disaster_cooldowns = {}
+hot_stocks = set ()
 stocks = {
     "예빈닉스": 120000, "지유엔터": 15000, "헬프미": 8000, 
     "명철수산": 12000, "찬우상사": 9500, "예원데이터": 25000, 
@@ -44,61 +46,25 @@ def home(): return "OK", 200
 # --- [주식 변동 시스템] ---
 @tasks.loop(minutes=1)
 async def update_stocks():
-    # 1. 이전 급등주 기록 초기화
-    hot_stocks.clear() 
-    
-    news_events = [
-        ("계약 체결", 1.15), ("신제품 발표", 1.20), ("대규모 투자 유치", 1.10),
-        ("경영진 교체", 0.90), ("실적 부진", 0.85), ("특허 소송 패소", 0.80)
-    ]
-    
-    news_msg = None
-    if random.random() < 0.15:
-        target_stock = random.choice(list(stocks.keys()))
-        event_name, multiplier = random.choice(news_events)
-        stocks[target_stock] = int(stocks[target_stock] * multiplier)
-        
-        # 속보가 뜬 종목을 급등주 세트에 추가
-        hot_stocks.add(target_stock) 
-        
-        news_msg = f"📰 **[예빈뉴스]** 긴급속보입니다! {target_stock} 주식이 **'{event_name}'** 소식으로 인해 주가가 크게 변동합니다!"
-    
-    # 2. 일반 변동 로직 (생략)
-    # ...
-
-    # 3. 지정된 채널로만 알림 전송
-    channel = bot.get_channel(1523727776014794925)
-    if channel and news_msg:
-        await channel.send(news_msg)
-    
-    save_data()
-    
-    # 2. 주식 일반 변동 (완만하게: -1% ~ +2%)
+    # 1. 모든 주식 변동 로직
     for stock in stocks:
-        if news_msg and stock in news_msg: continue
-        
         change_rate = random.uniform(0.99, 1.02)
         stocks[stock] = int(stocks[stock] * change_rate)
-        
-        # 최소 가격 100원 제한
         if stocks[stock] < 100: stocks[stock] = 100
     
     save_data()
-
-    # 3. 디스코드 알림
+    
+    # 2. 지정된 채널로 보고 (NOTICE_CHANNEL_ID 변수 사용)
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if channel:
-        if news_msg:
-            await channel.send(news_msg)
-
-@bot.command()
-async def 주식(ctx):
-    msg = ""
-    for name, price in stocks.items():
-        # hot_stocks에 포함된 종목만 🔥 표시
-        status = "🔥 급등" if name in hot_stocks else " " 
-        msg += f"📈 {name}: {price:,}원 {status}\n"
-    await ctx.send(f"📊 **현재 주식 시장**\n{msg}\n사용법: `!매수 [종목명] [수량]`")
+        msg = "📊 **[시장 상황 보고]**\n"
+        msg += "--------------------------\n"
+        for name, price in stocks.items():
+            msg += f"📈 {name}: {price:,}원\n"
+        msg += "--------------------------\n"
+        msg += "사용법: `!매수 [종목명] [수량]`"
+        
+        await channel.send(msg)
 
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
@@ -963,21 +929,30 @@ async def 회수(ctx, m: discord.Member, a: int):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# --- 마지막 실행 블록 (여기부터 파일 끝까지 아래 내용만 남기세요) ---
-
-async def main():
+# 파일 최하단 코드를 이것으로 교체하세요.
+async def run_bot():
     token = os.environ.get('BOT_TOKEN')
-    if token:
-        await bot.start(token)
+    if not token: 
+        print("토큰 없음")
+        return
 
-# --- 파일 맨 아래쪽 (이것만 남기세요) ---
+    while True:
+        try:
+            await bot.start(token)
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                print("⚠️ API 제한 감지! 15분간 대기 후 재시작합니다.")
+                await asyncio.sleep(900) 
+            else:
+                await asyncio.sleep(60) 
+        except Exception as e:
+            print(f"오류 발생: {e}")
+            await asyncio.sleep(60)
+
 if __name__ == "__main__":
-    # Flask 서버를 별도 스레드에서 실행
     def run_flask():
         port = int(os.environ.get("PORT", 10000))
         app.run(host='0.0.0.0', port=port)
     
     Thread(target=run_flask).start()
-    
-    # 디스코드 봇은 메인 스레드에서 실행
-    asyncio.run(main())
+    asyncio.run(run_bot())
