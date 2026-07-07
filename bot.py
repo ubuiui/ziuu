@@ -996,6 +996,26 @@ async def DB저장(ctx):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
+# [데이터 로드 함수 추가]
+def load_all_data():
+    global stocks, user_money, user_stocks, user_names, attendance_data
+    try:
+        # DB에서 유저 데이터들을 한 번에 메모리로 가져오기
+        all_users = list(users_col.find())
+        for doc in all_users:
+            uid = doc["_id"]
+            user_money[uid] = doc.get("money", 1000)
+            user_stocks[uid] = doc.get("stocks", {})
+            user_names[uid] = doc.get("name", "알수없음")
+            attendance_data[uid] = doc.get("attendance", [])
+        
+        # 주식 데이터가 있다면 여기서 로드 (예시)
+        # stocks = db["market"].find_one({"_id": "current_stocks"}).get("data", {})
+        
+        print("📥 데이터베이스에서 모든 유저 데이터를 로드했습니다.")
+    except Exception as e:
+        print(f"⚠️ 데이터 로드 중 오류 발생: {e}")
+
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} 로그인 완료!")
