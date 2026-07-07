@@ -183,6 +183,7 @@ async def before_update():
 @bot.command()
 async def 매수(ctx, name: str, qty: int):
     uid = ctx.author.id
+    sync_user_data(uid, ctx.author.name)
     await asyncio.sleep(0.3)
     if name not in stocks or qty <= 0:
         return await ctx.send("❌ 존재하지 않는 종목이거나 잘못된 수량입니다.")
@@ -218,6 +219,7 @@ async def on_command_error(ctx, error):
 @bot.command()
 async def 내주식(ctx):
     uid = ctx.author.id
+    sync_user_data(uid, ctx.author.name)
     my_stocks = user_stocks.get(uid, {})
     
     if not my_stocks:
@@ -263,6 +265,7 @@ async def 내정보(ctx):
 @bot.command()
 async def 매도(ctx, name: str, qty: int):
     uid = ctx.author.id
+    sync_user_data(uid, ctx.author.name)
     await asyncio.sleep(0.3)
     # 1. 예외 처리
     if name not in user_stocks.get(uid, {}) or user_stocks[uid][name]["qty"] < qty:
@@ -298,10 +301,33 @@ async def treasure_event():
     except:
         await channel.send("💨 아쉽게도 아무도 보물을 가져가지 못했습니다.")
 
+async def start_double_or_nothing(ctx, win_money, original_bet, game_name):
+    uid = ctx.author.id
+    await ctx.send(f"🎲 **{game_name} 승리!** 묻고 더블로 가시겠습니까? (10초 내에 '네'를 입력하면 2배 도전, 아니면 정산)")
+    
+    def check(m):
+        return m.author.id == uid and m.channel.id == ctx.channel.id and m.content in ['네', 'y', '예']
+    
+    try:
+        await bot.wait_for('message', check=check, timeout=10.0)
+        # 묻더 도전 (40% 확률로 2배, 실패 시 0원)
+        if get_win_result():
+            final_money = win_money * 2
+            user_money[uid] = user_money.get(uid, 1000) + final_money
+            await ctx.send(f"🎉 **성공!** 묻더에 성공하여 총 {final_money:,}원을 획득했습니다!")
+        else:
+            await ctx.send("💥 **실패!** 묻더에 실패하여 상금을 잃었습니다.")
+    except asyncio.TimeoutError:
+        user_money[uid] = user_money.get(uid, 1000) + win_money
+        await ctx.send(f"✅ 시간 초과로 {win_money:,}원 정산되었습니다.")
+    
+    save_user_db(uid)
+
 # --------------------
 
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
+    sync_user_data(uid, ctx.author.name)
     user_names[uid] = ctx.author.name
     if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능합니다.")
     if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액이 부족하여 게임을 시작할 수 없습니다.")
@@ -405,6 +431,7 @@ async def play_blackjack(ctx, bet):
 @bot.command()
 async def 경주(ctx, bet: int = 1000):
     uid = ctx.author.id
+    sync_user_data(uid, ctx.author.name)
     user_names[uid] = ctx.author.name
     if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능합니다.")
     if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액이 부족하여 시작할 수 없습니다.")
@@ -501,6 +528,7 @@ async def 타자(ctx):
 @bot.command()
 async def 슬롯(ctx, bet: int = 1000):
     uid = ctx.author.id
+    sync_user_data(uid, ctx.author.name)
     user_names[uid] = ctx.author.name
     if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능합니다.")
     if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액이 부족하여 슬롯을 돌릴 수 없습니다.")
@@ -553,6 +581,8 @@ async def 슬롯(ctx, bet: int = 1000):
 # --- 🪜 미니게임 4: 사다리 타기 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
 async def 사다리(ctx, bet: int = None, *, args: str = None):
+    uid = ctx.author.id
+    sync_user_data(uid, ctx.author.name)
     if bet is None:
         return await ctx.send("⚠️ 사용법: `!사다리 [판돈]`")
 
@@ -580,6 +610,7 @@ async def 사다리(ctx, bet: int = None, *, args: str = None):
 
 # --- 🎰 미니게임 5: 멀티 룰렛 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
+sync_user_data(uid, ctx.author.name)
 async def 룰렛(ctx, bet: int = None, *, args: str = None):
     if bet is None:
         return await ctx.send("⚠️ 사용법: `!룰렛 [판돈]`")
@@ -618,6 +649,7 @@ async def 룰렛(ctx, bet: int = None, *, args: str = None):
 
 # --- ❤️ [신규 미니게임 6] 실시간 중계형 멀티 소개팅 배팅 게임 ---
 @bot.command()
+sync_user_data(uid, ctx.author.name)
 async def 소개팅(ctx, bet: int = None):
     if bet is None:
         return await ctx.send("⚠️ 사용법: `!소개팅 [판돈]`")
@@ -855,6 +887,7 @@ async def 랭킹(ctx):
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
 
 @bot.command()
+sync_user_data(uid, ctx.author.name)
 async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000):,}원입니다.")
 
 # --- 📢 대신 말하기 기능 ---
@@ -938,6 +971,16 @@ async def 지급(ctx, m: discord.Member, a: int):
     embed.set_footer(text=f"수행 관리자: {ctx.author.name} | 실시간 DB 연동 완료")
     await ctx.send(embed=embed)
 
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def 게임초기화(ctx):
+    uid = ctx.author.id
+    if uid in game_states:
+        game_states.pop(uid, None)
+        await ctx.send("✅ 진행 중이던 게임 상태를 강제로 초기화했습니다. 이제 다시 게임을 시작하세요!")
+    else:
+        await ctx.send("ℹ️ 현재 진행 중인 게임이 없습니다.")
+
 # --- 👑 관리자 전용: 자산 회수 ---
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -986,6 +1029,26 @@ async def on_ready():
         print("🚀 주식 변동 시스템 루프가 시작되었습니다.")
     else:
         print("ℹ️ 루프가 이미 실행 중입니다.")
+
+def sync_user_data(uid, name="알수없음"):
+    # 메모리에 데이터가 이미 있으면 그냥 통과
+    if uid in user_money:
+        return
+    
+    # 메모리에 없으면 DB에서 즉시 조회
+    data = users_col.find_one({"_id": uid})
+    if data:
+        user_money[uid] = data.get("money", 1000)
+        user_stocks[uid] = data.get("stocks", {})
+        user_names[uid] = data.get("name", name)
+        attendance_data[uid] = data.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
+        user_stats[uid] = data.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+        user_profits[uid] = data.get("profit", 0)
+    else:
+        # DB에도 없으면 신규 유저로 기본값 설정
+        user_money[uid] = 1000
+        user_stocks[uid] = {}
+        user_names[uid] = name
 
 # 봇 실행 (기존 bot.run 부분은 이 밑에 그대로 두세요)
 
