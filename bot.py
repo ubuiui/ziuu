@@ -7,68 +7,43 @@ from pymongo import MongoClient
 import certifi
 import flask
 
-def get_win_result():
-    # 40% 확률로 True (유저 승리), 60% 확률로 False (유저 패배)
-    return random.randint(0, 99) < 40
-
-# [중요] 봇 선언
+# [1] 봇 설정 및 선언 (딱 한 번만 선언해야 합니다!)
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
 NOTICE_CHANNEL_ID = 1523727776014794925
 
-# 봇 선언 직후 (intents 설정 다음)
+# 봇 선언은 아래 딱 한 줄이면 충분합니다.
 bot = commands.Bot(command_prefix='!', intents=intents, reconnect=True)
 
-# 기존 변수들 밑에 추가
+# [2] 전역 변수 초기화 (여기서 다 정의해야 에러가 안 납니다)
+stocks = {}          # 실제로는 DB에서 불러오지만 초기화 필수
+delisted_stocks = {} # <--- 이게 없어서 봇이 죽었던 겁니다!
+user_money = {}
+user_stocks = {}
+user_names = {}
+attendance_data = {}
 force_next_event = False
-last_force_news_time = datetime.datetime.min # 초기값은 아주 오래된 시간
+last_force_news_time = datetime.datetime.min
 
-# [중요] 절대 죽지 않는 DB 연결 로직
+# [3] DB 연결 로직
 client = None
 db = None
 users_col = None
 
 try:
-    # SSL 인증서 문제를 회피하면서 연결 시도
     client = MongoClient(os.environ.get('MONGO_URI'), 
                          serverSelectionTimeoutMS=5000,
                          tlsCAFile=certifi.where())
     db = client["stock_game"]
     users_col = db["users"]
-    client.server_info() # 연결 확인
+    client.server_info()
     print("✅ MongoDB 연결 성공!")
 except Exception as e:
     print(f"⚠️ MongoDB 연결 실패, 오프라인 모드로 시작합니다: {e}")
 
-def load_all_data():
-    if users_col is None: 
-        return
-    try:
-        cursor = users_col.find({})
-        for doc in cursor:
-            uid = doc["_id"]
-            user_money[uid] = doc.get("money", 1000)
-            user_stocks[uid] = doc.get("stocks", {})
-            user_names[uid] = doc.get("name", "알수없음")
-            attendance_data[uid] = doc.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
-            user_stats[uid] = doc.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-            # [추가] 수익금 데이터 로드
-            user_profits[uid] = doc.get("profit", 0)
-        print("✅ 모든 데이터 로드 완료")
-    except Exception as e:
-        print(f"⚠️ 데이터 로드 중 에러: {e}")
-
-user_money = {}
-user_stocks = {}
-user_names = {}
-attendance_data = {}
-game_states = {}
-gift_cooldowns = {}
-disaster_cooldowns = {}
-user_stats = {}
-user_profits = {}
+# ... 그 아래부터는 기존에 작성하신 @bot.command() 들을 그대로 두시면 됩니다.
 
 stocks = {
     "예빈닉스": 123000, "지유엔터": 15000, "헬프미": 8000, 
