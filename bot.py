@@ -577,12 +577,14 @@ async def 슬롯(ctx, bet: int = 1000):
     uid = ctx.author.id
     sync_user_data(uid, ctx.author.name)
     user_names[uid] = ctx.author.name
+    
+    # 1. 예외 처리 및 선차감
     if bet < 1000: return await ctx.send("⚠️ 최소 배팅 1000원부터 가능합니다.")
     if bet > user_money.get(uid, 1000): return await ctx.send("❌ 잔액이 부족하여 슬롯을 돌릴 수 없습니다.")
     
-    # [수정된 로직] 먼저 배팅금을 차감합니다.
-    user_money[uid] -= bet
+    user_money[uid] -= bet # 배팅금 선차감
     
+    # 2. 슬롯 애니메이션
     emojis = ["🍒", "🍇", "🍋", "🔔", "💎"]
     embed = discord.Embed(title="🎰 슬롯머신 가동 중...", description="[ 🪙 | 🪙 | 🪙 ]", color=discord.Color.orange())
     msg = await ctx.send(embed=embed)
@@ -593,42 +595,43 @@ async def 슬롯(ctx, bet: int = 1000):
         embed.description = f"[ {fake_slots[0]} | {fake_slots[1]} | {fake_slots[2]} ]"
         await msg.edit(embed=embed)
 
-    # [수정] 확률 관리 엔진 적용 (40% 확률로 승리 판정)
-    is_win = random.randint(0, 99) < 40
+    # 3. 결과 판정
+    is_win = random.randint(0, 99) < 40 # 40% 확률 승리
     
     if is_win:
-        # 승리 시 15% 확률로 잭팟, 나머지 85% 확률로 페어
-        if random.random() < 0.15:
+        # 승리 로직
+        if random.random() < 0.15: # 잭팟
             res = [random.choice(emojis)] * 3
             multiplier = 10
             msg_text = f"🎉🎉🎉 트리플 달성! 초대박 잭팟 완성!!! ({multiplier}배)"
-        else:
-            # 페어 만들기 (최소 2개 일치)
+        else: # 페어
             res = [emojis[0], emojis[0], emojis[1]]
             random.shuffle(res)
             multiplier = 1.2
             msg_text = "🔔 페어 성공! (1.2배)"
         
         win_money = int(bet * multiplier)
-        user_money[uid] += win_money
+        
+        # 묻더 연결: 여기서 돈을 더하지 않고 바로 함수로 넘깁니다.
+        embed.description = f"[ {res[0]} | {res[1]} | {res[2]} ]"
+        embed.title = "🎯 슬롯머신 결과 발표"
+        embed.add_field(name="정산 결과", value=f"{msg_text}\n획득 예정 상금: **{win_money:,}원**\n\n잠시 후 **묻더** 선택 창이 활성화됩니다!")
+        await msg.edit(embed=embed)
+        
+        await start_double_or_nothing(ctx, win_money, bet, "슬롯머신")
+        
     else:
-        # 패배 시 (3개가 절대 같지 않게 조정)
+        # 패배 로직
         res = ["🍒", "🍇", "🍋"]
         random.shuffle(res)
         msg_text = "😭 꽝! 다음 기회에"
-
-    embed.description = f"[ {res[0]} | {res[1]} | {res[2]} ]"
-    embed.title = "🎯 슬롯머신 결과 발표"
-    
-    if is_win:
-        embed.add_field(name="정산 결과", value=f"{msg_text}\n획득 예정 상금: **{win_money:,}원**\n\n잠시 후 **묻더** 선택 창이 활성화됩니다!")
-        await msg.edit(embed=embed)
-        await start_double_or_nothing(ctx, win_money, bet, "슬롯머신")
-    else:
+        
+        embed.description = f"[ {res[0]} | {res[1]} | {res[2]} ]"
+        embed.title = "🎯 슬롯머신 결과 발표"
         embed.add_field(name="정산 결과", value=f"{msg_text}\n변동 금액: -{bet:,}원\n현재 자산: {user_money[uid]:,}원")
         await msg.edit(embed=embed)
         
-    save_user_db(uid)
+        save_user_db(uid) # 패배 시에만 바로 저장
 
 # --- ❤️ [신규 미니게임 6] 실시간 중계형 멀티 소개팅 배팅 게임 ---
 @bot.command()
