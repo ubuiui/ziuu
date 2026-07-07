@@ -65,6 +65,8 @@ disaster_cooldowns = {}
 user_stats = {}
 user_profits = {}
 
+delisted_stocks = {}
+
 stocks = {
     "예빈닉스": 123000, "지유엔터": 15000, "헬프미": 8000, 
     "명철수산": 12000, "찬우상사": 9500, "예원데이터": 25000, 
