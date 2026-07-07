@@ -79,6 +79,9 @@ def save_user_db(uid):
  def save_user_db(uid):
     if users_col is None: return
     
+# [수정된 통합 함수]
+def save_user_db(uid):
+    if users_col is None: return
     users_col.update_one(
         {"_id": uid},
         {"$set": {
