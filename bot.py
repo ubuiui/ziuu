@@ -88,19 +88,6 @@ def save_user_db(uid):
         upsert=True
     )
 
-def load_all_data():
-    global user_money, user_stocks, user_names, attendance_data, user_stats
-    for data in users_col.find():
-        uid = data["_id"]
-        user_money[uid] = data.get("money", 1000)
-        user_stocks[uid] = data.get("stocks", {})
-        user_names[uid] = data.get("name", "알수없음")
-        attendance_data[uid] = data.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
-        user_stats[uid] = data.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-    print("✅ MongoDB에서 모든 데이터를 성공적으로 로드했습니다.")
-
-# [기존 코드의 나머지 부분은 그대로 유지하되, 각 명령어 함수 끝에 save_user_db(ctx.author.id)를 추가하세요]
-# 예: !매수 함수 마지막에 save_user_db(ctx.author.id) 추가
 
 @bot.command()
 @commands.is_owner() # 개발자만 사용 가능하게 설정
