@@ -1,5 +1,4 @@
 discord.py
-pymongo[srv]
-dnspython
+pymongo
 flask
 certifi
