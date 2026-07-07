@@ -5,12 +5,19 @@ from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
 import certifi
+import flask
+
+def get_win_result():
+    # 40% 확률로 True (유저 승리), 60% 확률로 False (유저 패배)
+    return random.randint(0, 99) < 40
 
 # [중요] 봇 선언
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
+NOTICE_CHANNEL_ID = 1523727776014794925
+
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # [중요] 절대 죽지 않는 DB 연결 로직
@@ -42,7 +49,9 @@ def load_all_data():
             user_names[uid] = doc.get("name", "알수없음")
             attendance_data[uid] = doc.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
             user_stats[uid] = doc.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-        print("✅ 데이터 로드 완료")
+            # [추가] 수익금 데이터 로드
+            user_profits[uid] = doc.get("profit", 0)
+        print("✅ 모든 데이터 로드 완료")
     except Exception as e:
         print(f"⚠️ 데이터 로드 중 에러: {e}")
 
@@ -54,6 +63,7 @@ game_states = {}
 gift_cooldowns = {}
 disaster_cooldowns = {}
 user_stats = {}
+user_profits = {}
 
 stocks = {
     "예빈닉스": 123000, "지유엔터": 15000, "헬프미": 8000, 
@@ -66,21 +76,21 @@ def save_user_db(uid):
     if users_col is None: 
         return
     
-    # 1. 데이터를 먼저 업데이트합니다.
-    result = users_col.update_one(
+ def save_user_db(uid):
+    if users_col is None: return
+    
+    users_col.update_one(
         {"_id": uid},
         {"$set": {
             "money": user_money.get(uid, 1000),
             "stocks": user_stocks.get(uid, {}),
             "name": user_names.get(uid, "알수없음"),
-            "attendance": attendance_data.get(uid, {"streak": 0, "last_date": ""})
+            "attendance": attendance_data.get(uid, {"streak": 0, "total": 0, "last_date": ""}),
+            "stats": user_stats.get(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1}),
+            "profit": user_profits.get(uid, 0)
         }},
         upsert=True
     )
-    
-    # 2. 결과 확인 코드를 윗줄과 정확히 맞췄습니다.
-    if result.acknowledged:
-        pass # 에러가 발생하지 않도록 정상 처리
 
 def load_all_data():
     global user_money, user_stocks, user_names, attendance_data, user_stats
@@ -95,6 +105,12 @@ def load_all_data():
 
 # [기존 코드의 나머지 부분은 그대로 유지하되, 각 명령어 함수 끝에 save_user_db(ctx.author.id)를 추가하세요]
 # 예: !매수 함수 마지막에 save_user_db(ctx.author.id) 추가
+
+@bot.command()
+@commands.is_owner() # 개발자만 사용 가능하게 설정
+async def 주소(ctx):
+    # 이 코드를 넣고 봇을 재실행한 뒤, 디스코드에서 !주소 라고 쳐보세요.
+    await ctx.send(f"현재 봇의 웹 주소: https://{os.environ['REPL_SLUG']}.{os.environ['REPL_OWNER']}.repl.co")
 
 # --- [설정 공간] ---
 YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@민지유_인데요/live"  
@@ -133,6 +149,10 @@ NEWS_DB = {
         "🥀 [악재] {name}, 노후 설비 폭발 사고로 안전성 논란 발생!"
     ]
 }
+
+@update_stocks.before_loop
+async def before_update():
+    await bot.wait_until_ready() # 봇이 완전히 켜질 때까지 기다림
 
 # --- [주식 변동 시스템] ---
 @tasks.loop(minutes=3)
@@ -174,6 +194,10 @@ async def update_stocks():
         msg += "\n사용법: `!매수 [종목명] [수량]`"
         await channel.send(msg)
         await asyncio.sleep(2)
+
+@update_stocks.before_loop
+async def before_update():
+    await bot.wait_until_ready()
 
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
@@ -299,62 +323,6 @@ async def treasure_event():
 
 # --------------------
 
-app = Flask('')
-@app.route('/')
-def home(): 
-    return "OK", 200
-
-def get_score(hand):
-    score = 0; aces = 0
-    for card in hand:
-        rank = card[:-1]
-        score += 10 if rank in ['J','Q','K'] else (11 if rank == 'A' else int(rank))
-        if rank == 'A': aces += 1
-    while score > 21 and aces: score -= 10; aces -= 1
-    return score
-
-def create_embed(uid, data, msg="진행 중", is_final=False):
-    embed = discord.Embed(title="♠️ 블랙잭 게임 ♣️", color=discord.Color.gold())
-    embed.add_field(name="나의 카드", value=f"{' '.join(data['p'])} (합: {get_score(data['p'])})", inline=True)
-    dealer_val = f"{' '.join(data['d'])} (합: {get_score(data['d'])})" if is_final else f"{data['d'][0]} [??]"
-    embed.add_field(name="딜러 카드", value=dealer_val, inline=True)
-    embed.add_field(name="상태 정보", value=f"베팅액: {data['bet']}원\n총 자산: {user_money.get(uid, 1000)}원\n결과: {msg}", inline=False)
-    if not is_final:
-        embed.set_footer(text="💬 채팅창에 [ㅎ / ㅅ / ㄷ / ㅍ] 중 하나를 입력하세요! (제한시간 60초)")
-    return embed
-
-async def ask_next_game(ctx, current_bet):
-    uid = ctx.author.id
-    game_states.pop(uid, None)
-    final_money = user_money.get(uid, 1000)
-    
-    if final_money < 1000:
-        return await ctx.send("❌ 잔액이 부족(1000원 미만)하여 게임을 종료합니다.")
-        
-    await ctx.send(
-        f"🔄 **다음 게임을 선택하세요!** [현재 자산: {final_money}원]\n"
-        f"💬 채팅창에 번호를 입력하세요 (제한시간 30초):\n"
-        f"**1** : 동일 배팅 진행 ({current_bet}원)\n"
-        f"**2** : 2배 배팅 진행 ({current_bet * 2}원)\n"
-        f"**3** : 게임 종료"
-    )
-
-    def check(m):
-        return m.author.id == uid and m.channel.id == ctx.channel.id and m.content.strip() in ['1', '2', '3']
-
-    try:
-        msg = await bot.wait_for('message', check=check, timeout=30.0)
-        choice = msg.content.strip()
-        
-        if choice == '1':
-            await play_blackjack(ctx, current_bet)
-        elif choice == '2':
-            await play_blackjack(ctx, current_bet * 2)
-        else:
-            await ctx.send("👋 게임을 종료합니다.")
-    except asyncio.TimeoutError:
-        await ctx.send("⏱️ 30초 내에 선택하지 않아 게임이 종료되었습니다.")
-
 async def play_blackjack(ctx, bet):
     uid = ctx.author.id
     user_names[uid] = ctx.author.name
@@ -370,6 +338,7 @@ async def play_blackjack(ctx, bet):
     
     main_msg = await ctx.send(embed=create_embed(uid, data))
     
+    # 21 즉시 당첨 처리
     if get_score(p) == 21:
         game_states.pop(uid, None)
         if get_score(d) == 21:
@@ -378,46 +347,44 @@ async def play_blackjack(ctx, bet):
             win = bet * 10
             user_money[uid] = user_money.get(uid, 1000) + win
             await main_msg.edit(embed=create_embed(uid, data, f"🎉 블랙잭(10배)! +{win}원", is_final=True))
-            
         await ask_next_game(ctx, bet)
         return
 
     def check_action(m):
-        if m.author.id != uid or m.channel.id != ctx.channel.id:
-            return False
-        val = m.content.strip().lower()
-        return val in ['ㅎ', 'ㅎㅌ', '히트', 'hit', 'ㅅ', 'ㅅㅌ', '스테이', 'stay', 'ㄷ', 'ㄷㅂ', '더블', 'double', 'ㅍ', 'ㅍㄱ', '포기', 'surrender']
+        if m.author.id != uid or m.channel.id != ctx.channel.id: return False
+        return m.content.strip().lower() in ['ㅎ', 'ㅎㅌ', '히트', 'hit', 'ㅅ', 'ㅅㅌ', '스테이', 'stay', 'ㄷ', 'ㄷㅂ', '더블', 'double', 'ㅍ', 'ㅍㄱ', '포기', 'surrender']
 
     while uid in game_states:
         try:
             action_msg = await bot.wait_for('message', check=check_action, timeout=60.0)
             user_input = action_msg.content.strip().lower()
-            
             try: await action_msg.delete()
             except: pass
 
             if user_input in ['ㅎ', 'ㅎㅌ', '히트', 'hit']:
                 data['p'].append(data['deck'].pop())
-                if get_score(data['d']) < 17 and get_score(data['p']) <= 21:
-                    data['d'].append(data['deck'].pop())
-
                 if get_score(data['p']) > 21:
                     user_money[uid] = user_money.get(uid, 1000) - data['bet']
                     await main_msg.edit(embed=create_embed(uid, data, "💥 버스트! 패배", is_final=True))
                     await ask_next_game(ctx, data['bet'])
                     return
-                else:
-                    await main_msg.edit(embed=create_embed(uid, data, "진행 중 (히트함)"))
+                await main_msg.edit(embed=create_embed(uid, data, "진행 중 (히트함)"))
 
             elif user_input in ['ㅅ', 'ㅅㅌ', '스테이', 'stay']:
-                while get_score(data['d']) < 17:
-                    data['d'].append(data['deck'].pop())
-                    
-                ps, ds = get_score(data['p']), get_score(data['d'])
-                res_msg = "🏆 승리!" if (ds > 21 or ps > ds) else ("❌ 패배!" if ps < ds else "🤝 무승부")
+                while get_score(data['d']) < 17: data['d'].append(data['deck'].pop())
                 
-                if "승리" in res_msg: user_money[uid] = user_money.get(uid, 1000) + data['bet']
-                elif "패배" in res_msg: user_money[uid] = user_money.get(uid, 1000) - data['bet']
+                # 40% 확률 엔진 적용
+                if get_win_result(): 
+                    if random.random() < 0.15: # 승리 유저 중 15% 잭팟
+                        win = data['bet'] * 10
+                        user_money[uid] = user_money.get(uid, 1000) + win
+                        res_msg = f"🎉 블랙잭 잭팟(10배)! +{win}원"
+                    else:
+                        user_money[uid] = user_money.get(uid, 1000) + data['bet']
+                        res_msg = "🏆 승리!"
+                else:
+                    user_money[uid] = user_money.get(uid, 1000) - data['bet']
+                    res_msg = "❌ 패배!"
                 
                 await main_msg.edit(embed=create_embed(uid, data, res_msg, is_final=True))
                 await ask_next_game(ctx, data['bet'])
@@ -425,23 +392,26 @@ async def play_blackjack(ctx, bet):
 
             elif user_input in ['ㄷ', 'ㄷㅂ', '더블', 'double']:
                 if (data['bet'] * 2) > user_money.get(uid, 1000):
-                    await ctx.send("⚠️ 잔액이 부족하여 더블다운이 불가능합니다.", delete_after=3)
-                    continue
-                
+                    await ctx.send("⚠️ 잔액 부족!", delete_after=3); continue
                 data['bet'] *= 2
                 data['p'].append(data['deck'].pop())
-                while get_score(data['d']) < 17:
-                    data['d'].append(data['deck'].pop())
-                    
-                ps, ds = get_score(data['p']), get_score(data['d'])
-                if ps > 21:
-                    res_msg = "💥 버스트! 패배"
+                while get_score(data['d']) < 17: data['d'].append(data['deck'].pop())
+                
+                if get_score(data['p']) > 21:
                     user_money[uid] = user_money.get(uid, 1000) - data['bet']
+                    res_msg = "💥 버스트! 패배"
+                elif get_win_result():
+                    if random.random() < 0.15:
+                        win = data['bet'] * 10
+                        user_money[uid] = user_money.get(uid, 1000) + win
+                        res_msg = f"🎉 블랙잭 잭팟(10배)! +{win}원"
+                    else:
+                        user_money[uid] = user_money.get(uid, 1000) + data['bet']
+                        res_msg = "🏆 승리!"
                 else:
-                    res_msg = "🏆 승리!" if (ds > 21 or ps > ds) else ("❌ 패배!" if ps < ds else "🤝 무승부")
-                    if "승리" in res_msg: user_money[uid] = user_money.get(uid, 1000) + data['bet']
-                    elif "패배" in res_msg: user_money[uid] = user_money.get(uid, 1000) - data['bet']
-                    
+                    user_money[uid] = user_money.get(uid, 1000) - data['bet']
+                    res_msg = "❌ 패배!"
+                
                 await main_msg.edit(embed=create_embed(uid, data, f"더블다운 ➡️ {res_msg}", is_final=True))
                 await ask_next_game(ctx, data['bet'])
                 return
@@ -451,125 +421,9 @@ async def play_blackjack(ctx, bet):
                 await main_msg.edit(embed=create_embed(uid, data, "🏳️ 포기함 (절반 회수)", is_final=True))
                 await ask_next_game(ctx, data['bet'])
                 return
-
         except asyncio.TimeoutError:
             game_states.pop(uid, None)
-            await main_msg.edit(content="⏱️ 제한시간 초과로 게임이 자동 취소되었습니다.", embed=None)
-            return
-
-# --- 🚀 [공통 시스템] 미니게임용 묻고 더블로 가! 로직 ---
-async def start_double_or_nothing(ctx, current_win_prize, original_bet, game_name):
-    uid = ctx.author.id
-    current_prize = current_win_prize
-    stage = 1
-
-    while True:
-        success_rate = max(0.70 - (stage - 1) * 0.10, 0.10)
-        success_percentage = int(success_rate * 100)
-        fail_percentage = 100 - success_percentage
-
-        embed = discord.Embed(title=f"🔥 {game_name} - 묻고 더블로 가! (Stage {stage})", color=discord.Color.red())
-        embed.description = (
-            f"현재 누적 상금: **{current_prize:,}원**\n\n"
-            f"💬 채팅창에 다음 중 하나를 입력하세요 (제한시간 15초):\n"
-            f"👉 **`묻더`** : **{success_percentage}% 성공 확률**로 도전! 성공 시 상금이 **2.5배**로 떡상! ({int(current_prize * 2.5):,}원)\n"
-            f"👉 **`스톱`** : 여기서 멈추고 현재 상금을 안전하게 수령합니다."
-        )
-        embed.set_footer(text=f"⚠️ 실패 확률은 {fail_percentage}%이며, 실패 시 상금은 0원이 되고 원금도 날아갑니다!")
-        double_msg = await ctx.send(embed=embed)
-
-        def check(m):
-            return m.author.id == uid and m.channel.id == ctx.channel.id and m.content.strip() in ['묻더', '스톱']
-
-        try:
-            choice_msg = await bot.wait_for('message', check=check, timeout=15.0)
-            user_choice = choice_msg.content.strip()
-            try: await choice_msg.delete()
-            except: pass
-            await double_msg.delete()
-
-            if user_choice == '묻더':
-                if random.random() < success_rate:
-                    current_prize = int(current_prize * 2.5)
-                    stage += 1
-                    continue
-                else:
-                    user_money[uid] = user_money.get(uid, 1000) - original_bet
-                    fail_embed = discord.Embed(title="💥 묻더 실패! 올인 파산", color=discord.Color.dark_gray())
-                    fail_embed.description = f"앗.. {fail_percentage}%의 실패 확률을 뚫지 못하고 실패했습니다.\n상금은 공중분해되었으며 배팅 원금 **-{original_bet:,}원**이 차감됩니다.\n현재 잔액: {user_money[uid]:,}원"
-                    await ctx.send(embed=fail_embed)
-                    return
-            else:
-                net_profit = current_prize - original_bet
-                user_money[uid] = user_money.get(uid, 1000) + net_profit
-                stop_embed = discord.Embed(title="💰 묻더 스톱! 정산 완료", color=discord.Color.green())
-                stop_embed.description = f"현명한 선택! Stage {stage-1}에서 멈췄습니다.\n최종 획득 자산: **+{current_prize:,}원**\n현재 잔액: {user_money[uid]:,}원"
-                await ctx.send(embed=stop_embed)
-                return
-
-        except asyncio.TimeoutError:
-            await double_msg.delete()
-            net_profit = current_prize - original_bet
-            user_money[uid] = user_money.get(uid, 1000) + net_profit
-            timeout_embed = discord.Embed(title="⏱️ 시간 초과 자동 정산", color=discord.Color.green())
-            timeout_embed.description = f"시간이 초과되어 현재 금액으로 안전 정산되었습니다.\n최종 획득 자산: **+{current_prize:,}원**\n현재 잔액: {user_money[uid]:,}원"
-            await ctx.send(embed=timeout_embed)
-            return
-
-# --- 🎯 [공통 시스템] 다중 참가자 멀티 배팅방 수집 로직 ---
-async def setup_multi_bet_game(ctx, bet_amount, game_title):
-    creator = ctx.author
-    if bet_amount < 1000:
-        await ctx.send("⚠️ 최소 배팅 금액은 1000원입니다.")
-        return None
-    if user_money.get(creator.id, 1000) < bet_amount:
-        await ctx.send(f"❌ 잔액이 부족하여 배팅방을 개설할 수 없습니다. (현재: {user_money.get(creator.id, 1000):,}원)")
-        return None
-
-    participants = [creator]
-    user_names[creator.id] = creator.name
-
-    def make_embed():
-        mentions = ", ".join([u.mention for u in participants])
-        embed = discord.Embed(title=f"🎲 {game_title} 배팅방 개설!", color=discord.Color.purple())
-        embed.description = (
-            f"방장: **{creator.name}**\n"
-            f"인당 참가비(배팅금): **{bet_amount:,}원**\n\n"
-            f"🙋‍♂️ 함께 돈을 걸고 참여하실 분은 **30초 내에 아래 ✋ 이모지(리액션)**를 눌러주세요!\n"
-            f"**현재 참가자 ({len(participants)}명):**\n{mentions}"
-        )
-        return embed
-
-    join_msg = await ctx.send(embed=make_embed())
-    await join_msg.add_reaction("✋")
-
-    end_time = datetime.datetime.now() + datetime.timedelta(seconds=30)
-    
-    while True:
-        remaining = (end_time - datetime.datetime.now()).total_seconds()
-        if remaining <= 0:
-            break
-        try:
-            def reaction_check(r, u):
-                return r.message.id == join_msg.id and str(r.emoji) == "✋" and not u.bot
-
-            reaction, user = await bot.wait_for('reaction_add', check=reaction_check, timeout=remaining)
-            
-            if user not in participants:
-                if user_money.get(user.id, 1000) >= bet_amount:
-                    participants.append(user)
-                    user_names[user.id] = user.name
-                    await join_msg.edit(embed=make_embed())
-                else:
-                    await ctx.send(f"⚠️ {user.mention}님은 잔액이 부족하여 참여할 수 없습니다.", delete_after=3)
-        except asyncio.TimeoutError:
-            break
-
-    try: await join_msg.delete()
-    except: pass
-
-    return participants
-
+            await main_msg.edit(content="⏱️ 제한시간 초과.", embed=None); return
 # --- 🏎️ 미니게임 1: 자동차 경주 게임 ---
 @bot.command()
 async def 경주(ctx, bet: int = 1000):
@@ -684,25 +538,30 @@ async def 슬롯(ctx, bet: int = 1000):
         embed.description = f"[ {fake_slots[0]} | {fake_slots[1]} | {fake_slots[2]} ]"
         await msg.edit(embed=embed)
 
-    res = [random.choice(emojis) for _ in range(3)]
-    embed.description = f"[ {res[0]} | {res[1]} | {res[2]} ]"
+    # [수정] 확률 관리 엔진 적용 (40% 확률로 승리 판정)
+    # 승리(is_win = True)일 경우 40%, 패배일 경우 60%가 되도록 조정
+    is_win = random.randint(0, 99) < 40
     
-    is_win = False
-    multiplier = 0
-    msg_text = ""
-
-    if res[0] == res[1] == res[2]:
-        multiplier = 100
-        msg_text = f"🎉🎉🎉 트리플 달성! 초대박 잭팟 완성!!! ({multiplier}배)"
-        is_win = True
-    elif res[0] == res[1] or res[1] == res[2] or res[0] == res[2]:
-        multiplier = 1.5
-        msg_text = "🔔 페어 성공! (1.5배)"
-        is_win = True
+    if is_win:
+        # 승리 시 15% 확률로 잭팟, 나머지 85% 확률로 페어
+        if random.random() < 0.15:
+            res = [random.choice(emojis)] * 3
+            multiplier = 10
+            msg_text = f"🎉🎉🎉 트리플 달성! 초대박 잭팟 완성!!! ({multiplier}배)"
+        else:
+            # 페어 만들기 (최소 2개 일치)
+            res = [emojis[0], emojis[0], emojis[1]]
+            random.shuffle(res)
+            multiplier = 1.2
+            msg_text = "🔔 페어 성공! (1.2배)"
     else:
+        # 패배 시 (3개가 절대 같지 않게 조정)
+        res = ["🍒", "🍇", "🍋"]
+        random.shuffle(res)
         user_money[uid] = user_money.get(uid, 1000) - bet
         msg_text = "😭 꽝! 다음 기회에"
 
+    embed.description = f"[ {res[0]} | {res[1]} | {res[2]} ]"
     embed.title = "🎯 슬롯머신 결과 발표"
     
     if is_win:
@@ -713,8 +572,6 @@ async def 슬롯(ctx, bet: int = 1000):
     else:
         embed.add_field(name="정산 결과", value=f"{msg_text}\n변동 금액: -{bet:,}원\n현재 자산: {user_money[uid]:,}원")
         await msg.edit(embed=embed)
-
-    save_user_db(uid)
 
 # --- 🪜 미니게임 4: 사다리 타기 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
@@ -977,7 +834,7 @@ async def 공지(ctx, *, args: str = None):
 # --- 🏆 통합 랭킹 시스템 ---
 @bot.command()
 async def 랭킹(ctx):
-    embed = discord.Embed(title="👑 서버 종합 명예의 전당 👑", color=discord.Color.gold())
+    embed = discord.Embed(title="👑 예빈이네 명예의 전당 👑", color=discord.Color.gold())
 
     sorted_money = sorted(user_money.items(), key=lambda x: x[1], reverse=True)[:3]
     money_text = ""
@@ -1004,21 +861,18 @@ async def 랭킹(ctx):
         broke_text = f"📉 💸 **{', '.join(names)}** (현재 자산 0원 이하)\n*💡 `!재난지원금` 명령어로 부활을 노려보세요!*"
     embed.add_field(name="🚨 비운의 주인공! 실시간 파산왕 명단", value=broke_text, inline=False)
 
+    sorted_profit = sorted(user_profits.items(), key=lambda x: x[1], reverse=True)[:3]
+    profit_text = ""
+    for idx, (uid, profit) in enumerate(sorted_profit):
+        name = user_names.get(uid, f"유저({uid})")
+        profit_text += f"{money_emojis[idx]} **{idx+1}위** - {name} : `{profit:,}원`\n"
+    
+    if not profit_text or profit_text == "": 
+        profit_text = "기록이 없습니다."
+    embed.add_field(name="📈 주식 수익왕 (순수 수익 TOP 3)", value=profit_text, inline=False)
+
     embed.set_footer(text="꾸준한 출석과 도박 한탕으로 타이틀을 쟁탈해 보세요!")
     await ctx.send(embed=embed)
-
-@bot.event
-async def on_ready():
-    print(f"✅ 봇 연결 성공: {bot.user}")
-    load_all_data()
-    print("💾 데이터 로드 완료.")
-    
-    # 루프 시작 전 충분한 여유 시간
-    await asyncio.sleep(15) 
-    
-    if not update_stocks.is_running():
-        update_stocks.start()
-        print("📈 주식 루프 시작.")
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
@@ -1141,12 +995,16 @@ async def DB저장(ctx):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
-# 파일 최하단
-if __name__ == "__main__":
-    # Flask 서버용 (Render 유지용)
-    def run_flask():
-        app.run(host='0.0.0.0', port=10000)
-    Thread(target=run_flask).start()
 
-    # 디스코드 봇 시작
-    bot.run(os.environ.get('BOT_TOKEN'))
+@app.route('/api/healthz')
+def health():
+    return {"status": "ok"}, 200
+
+def run():
+    app.run(host='0.0.0.0', port=5000)
+
+t = Thread(target=run)
+t.start()
+
+# 디스코드 봇 시작
+bot.run(os.environ.get('BOT_TOKEN'))
