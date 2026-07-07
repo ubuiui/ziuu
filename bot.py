@@ -11,11 +11,7 @@ import flask
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.presences = True
-NOTICE_CHANNEL_ID = 1523727776014794925
-
-# 봇 선언은 아래 딱 한 줄이면 충분합니다.
-bot = commands.Bot(command_prefix='!', intents=intents, reconnect=True)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 # [2] 전역 변수 초기화 (여기서 다 정의해야 에러가 안 납니다)
 stocks = {}          # 실제로는 DB에서 불러오지만 초기화 필수
@@ -26,6 +22,12 @@ user_names = {}
 attendance_data = {}
 force_next_event = False
 last_force_news_time = datetime.datetime.min
+
+game_states = {}
+user_stats = {}
+user_profits = {}
+gift_cooldowns = {}
+disaster_cooldowns = {}
 
 # [3] DB 연결 로직
 client = None
@@ -42,6 +44,75 @@ try:
     print("✅ MongoDB 연결 성공!")
 except Exception as e:
     print(f"⚠️ MongoDB 연결 실패, 오프라인 모드로 시작합니다: {e}")
+
+# --- 1. 블랙잭 및 묻더 보조 함수들 ---
+def get_score(hand):
+    score = 0; aces = 0
+    for card in hand:
+        val = card[:-1]
+        if val in ['J', 'Q', 'K']: score += 10
+        elif val == 'A': score += 11; aces += 1
+        else: score += int(val)
+    while score > 21 and aces: score -= 10; aces -= 1
+    return score
+
+def create_embed(uid, data, msg="", is_final=False):
+    embed = discord.Embed(title="🃏 블랙잭", color=discord.Color.green())
+    embed.add_field(name="내 패", value=f"{' '.join(data['p'])} ({get_score(data['p'])})", inline=True)
+    embed.add_field(name="딜러 패", value=f"{' '.join(data['d'])}" if is_final else f"{data['d'][0]} ❓", inline=True)
+    if msg: embed.add_field(name="진행 상황", value=msg, inline=False)
+    else: embed.add_field(name="조작법", value="`히트`, `스테이`, `더블`, `포기` 를 입력하세요.", inline=False)
+    return embed
+
+async def ask_next_game(ctx):
+    game_states.pop(ctx.author.id, None)
+
+# --- 2. 6단계 묻더 기능 (40, 30, 20, 15, 10, 5%) ---
+async def start_double_or_nothing(ctx, current_money, step=0):
+    uid = ctx.author.id
+    probs = [0.4, 0.3, 0.2, 0.15, 0.1, 0.05]
+    
+    if step >= len(probs):
+        await ctx.send(f"🎉 **6단계 최종 성공!** 더 이상 도전 불가. 총 **{current_money:,}원**을 획득하며 종료합니다.")
+        user_money[uid] = user_money.get(uid, 1000) + current_money
+        save_user_db(uid)
+        await ask_next_game(ctx)
+        return
+
+    current_prob = probs[step]
+    embed = discord.Embed(title=f"🎲 묻고 더블로! ({step+1}단계)", color=discord.Color.gold())
+    embed.add_field(name="성공 확률", value=f"{int(current_prob*100)}%", inline=True)
+    embed.add_field(name="현재 금액", value=f"{current_money:,}원", inline=True)
+    embed.add_field(name="성공 시 획득", value=f"{int(current_money * 1.5):,}원", inline=False)
+    embed.set_footer(text="도전하려면 '네'를 입력하세요 (그 외 입력 시 정산)")
+    
+    await ctx.send(embed=embed)
+
+    def check(m):
+        return m.author.id == uid and m.channel.id == ctx.channel.id
+
+    try:
+        msg = await bot.wait_for('message', check=check, timeout=15.0)
+        if msg.content.strip() in ['네', 'y', '예', 'yes']:
+            if random.random() < current_prob:
+                new_money = int(current_money * 1.5)
+                await ctx.send(f"✅ **{step+1}단계 성공!** {new_money:,}원이 되었습니다.")
+                await start_double_or_nothing(ctx, new_money, step + 1)
+            else:
+                await ctx.send(f"💥 **{step+1}단계 실패!** 상금을 모두 잃었습니다.")
+                save_user_db(uid)
+                await ask_next_game(ctx)
+        else:
+            await ctx.send(f"✅ 정산 완료! 최종 **{current_money:,}원** 지급.")
+            user_money[uid] = user_money.get(uid, 1000) + current_money
+            save_user_db(uid)
+            await ask_next_game(ctx)
+    except asyncio.TimeoutError:
+        await ctx.send(f"⏱️ 시간 초과로 정산됩니다. **{current_money:,}원**")
+        user_money[uid] = user_money.get(uid, 1000) + current_money
+        save_user_db(uid)
+        await ask_next_game(ctx)
+
 
 # ... 그 아래부터는 기존에 작성하신 @bot.command() 들을 그대로 두시면 됩니다.
 
@@ -139,7 +210,7 @@ async def update_stocks():
     # 3. 뉴스 이벤트 (확률 50% 또는 관리자 강제)
     news_display = ""
     # [관리자 명령 체크] 또는 확률 적용
-    if random.random() < 0.50 or force_next_event:
+    if random.random() < 0.2 or force_next_event:
         force_next_event = False # 실행 후 초기화
         
         available_stocks = [s for s in stocks.keys() if s not in delisted_stocks]
@@ -288,74 +359,6 @@ async def treasure_event():
     except:
         await channel.send("💨 아쉽게도 아무도 보물을 가져가지 못했습니다.")
 
-
-# --- 1. 블랙잭 및 묻더 보조 함수들 ---
-def get_score(hand):
-    score = 0; aces = 0
-    for card in hand:
-        val = card[:-1]
-        if val in ['J', 'Q', 'K']: score += 10
-        elif val == 'A': score += 11; aces += 1
-        else: score += int(val)
-    while score > 21 and aces: score -= 10; aces -= 1
-    return score
-
-def create_embed(uid, data, msg="", is_final=False):
-    embed = discord.Embed(title="🃏 블랙잭", color=discord.Color.green())
-    embed.add_field(name="내 패", value=f"{' '.join(data['p'])} ({get_score(data['p'])})", inline=True)
-    embed.add_field(name="딜러 패", value=f"{' '.join(data['d'])}" if is_final else f"{data['d'][0]} ❓", inline=True)
-    if msg: embed.add_field(name="진행 상황", value=msg, inline=False)
-    else: embed.add_field(name="조작법", value="`히트`, `스테이`, `더블`, `포기` 를 입력하세요.", inline=False)
-    return embed
-
-async def ask_next_game(ctx):
-    game_states.pop(ctx.author.id, None)
-
-# --- 2. 6단계 묻더 기능 (40, 30, 20, 15, 10, 5%) ---
-async def start_double_or_nothing(ctx, current_money, step=0):
-    uid = ctx.author.id
-    probs = [0.4, 0.3, 0.2, 0.15, 0.1, 0.05]
-    
-    if step >= len(probs):
-        await ctx.send(f"🎉 **6단계 최종 성공!** 더 이상 도전 불가. 총 **{current_money:,}원**을 획득하며 종료합니다.")
-        user_money[uid] = user_money.get(uid, 1000) + current_money
-        save_user_db(uid)
-        await ask_next_game(ctx)
-        return
-
-    current_prob = probs[step]
-    embed = discord.Embed(title=f"🎲 묻고 더블로! ({step+1}단계)", color=discord.Color.gold())
-    embed.add_field(name="성공 확률", value=f"{int(current_prob*100)}%", inline=True)
-    embed.add_field(name="현재 금액", value=f"{current_money:,}원", inline=True)
-    embed.add_field(name="성공 시 획득", value=f"{int(current_money * 1.5):,}원", inline=False)
-    embed.set_footer(text="도전하려면 '네'를 입력하세요 (그 외 입력 시 정산)")
-    
-    await ctx.send(embed=embed)
-
-    def check(m):
-        return m.author.id == uid and m.channel.id == ctx.channel.id
-
-    try:
-        msg = await bot.wait_for('message', check=check, timeout=15.0)
-        if msg.content.strip() in ['네', 'y', '예', 'yes']:
-            if random.random() < current_prob:
-                new_money = int(current_money * 1.5)
-                await ctx.send(f"✅ **{step+1}단계 성공!** {new_money:,}원이 되었습니다.")
-                await start_double_or_nothing(ctx, new_money, step + 1)
-            else:
-                await ctx.send(f"💥 **{step+1}단계 실패!** 상금을 모두 잃었습니다.")
-                save_user_db(uid)
-                await ask_next_game(ctx)
-        else:
-            await ctx.send(f"✅ 정산 완료! 최종 **{current_money:,}원** 지급.")
-            user_money[uid] = user_money.get(uid, 1000) + current_money
-            save_user_db(uid)
-            await ask_next_game(ctx)
-    except asyncio.TimeoutError:
-        await ctx.send(f"⏱️ 시간 초과로 정산됩니다. **{current_money:,}원**")
-        user_money[uid] = user_money.get(uid, 1000) + current_money
-        save_user_db(uid)
-        await ask_next_game(ctx)
 
 # --- 3. 블랙잭 메인 로직 ---
 async def play_blackjack(ctx, bet):
@@ -517,6 +520,7 @@ async def 경주(ctx, bet: int = 1000):
         res_embed.add_field(name="❌ 아쉽습니다", value=f"승리한 예빈이는 **{winner}**였습니다. **-{bet:,}원** 차감")
         await ctx.send(embed=res_embed)
         save_user_db(uid)
+
 # --- ⚡ 미니게임 2: 순발력 타자 게임 ---
 @bot.command()
 async def 타자(ctx):
@@ -535,6 +539,7 @@ async def 타자(ctx):
     try:
         winner_msg = await bot.wait_for('message', check=check, timeout=30.0)
         winner = winner_msg.author
+        uid = winner.id
         user_names[winner.id] = winner.name
         prize = random.randint(500, 2000)
         user_money[winner.id] = user_money.get(winner.id, 1000) + prize
@@ -591,7 +596,7 @@ async def 슬롯(ctx, bet: int = 1000):
         embed.add_field(name="정산 결과", value=f"{msg_text}\n획득 예정 상금: **{win_money:,}원**\n\n잠시 후 **묻더** 선택 창이 활성화됩니다!")
         await msg.edit(embed=embed)
         
-        await start_double_or_nothing(ctx, win_money, bet, "슬롯머신")
+        await start_double_or_nothing(ctx, win_money, step=0)
         
     else:
         # 패배 로직
@@ -896,7 +901,7 @@ async def 정보(ctx, m: discord.Member = None):
 # --- 관리자 전용 : 호재악재 강제 실행 ---
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def ㅇㅇ(ctx):
+async def 강제뉴스(ctx):
     global force_next_event, last_force_news_time
     now = datetime.datetime.now()
     
@@ -998,20 +1003,18 @@ async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
 # [데이터 로드 함수 추가]
 def load_all_data():
-    global stocks, user_money, user_stocks, user_names, attendance_data
+    global stocks, user_money, user_stocks, user_names, attendance_data, user_stats, user_profits
     try:
-        # DB에서 유저 데이터들을 한 번에 메모리로 가져오기
         all_users = list(users_col.find())
         for doc in all_users:
             uid = doc["_id"]
             user_money[uid] = doc.get("money", 1000)
             user_stocks[uid] = doc.get("stocks", {})
             user_names[uid] = doc.get("name", "알수없음")
-            attendance_data[uid] = doc.get("attendance", [])
-        
-        # 주식 데이터가 있다면 여기서 로드 (예시)
-        # stocks = db["market"].find_one({"_id": "current_stocks"}).get("data", {})
-        
+            attendance_data[uid] = doc.get("attendance", {"streak": 0, "total": 0, "last_date": ""})
+            # 아래 데이터들을 추가로 로드해야 합니다.
+            user_stats[uid] = doc.get("stats", {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
+            user_profits[uid] = doc.get("profit", 0)
         print("📥 데이터베이스에서 모든 유저 데이터를 로드했습니다.")
     except Exception as e:
         print(f"⚠️ 데이터 로드 중 오류 발생: {e}")
@@ -1055,11 +1058,12 @@ def sync_user_data(uid, name="알수없음"):
 def health():
     return {"status": "ok"}, 200
 
-def run():
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    # Flask 서버를 쓰레드로 돌리고, 봇을 메인에서 실행합니다.
+    def run_flask():
+        app.run(host="0.0.0.0", port=5000, use_reloader=False)
 
-t = Thread(target=run)
-t.start()
-
-# 디스코드 봇 시작
-bot.run(os.environ.get('BOT_TOKEN'))
+    Thread(target=run_flask).start()
+    
+    # 여기서 봇을 실행 (디스코드 토큰은 환경변수로 받아오는 게 좋습니다)
+    bot.run(os.environ.get('DISCORD_TOKEN'))
