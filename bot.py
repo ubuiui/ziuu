@@ -455,7 +455,7 @@ async def 경주(ctx, bet: int = 1000):
     if uid in game_states: return await ctx.send("이미 진행 중인 미니게임이 있습니다.")
 
     game_states[uid] = True
-    cars = {"🔴👧 빨간예빈": 0, "🔵👧 파란예빈": 0, "🟢👧 초록예빈": 0, "🟡👧 노란예빈": 0}
+    cars =F{"🔴👧 빨간예빈": 0, "🔵👧 파란예빈": 0, "🟢👧 초록예빈": 0, "🟡👧 노란예빈": 0}
     car_list = list(cars.keys())
     
     guide = await ctx.send(
@@ -1058,12 +1058,34 @@ def sync_user_data(uid, name="알수없음"):
 def health():
     return {"status": "ok"}, 200
 
+# --- [맨 아래에 이 코드를 붙여넣으세요] ---
+
+# 1. 봇 실행 함수
 if __name__ == "__main__":
-    # Flask 서버를 쓰레드로 돌리고, 봇을 메인에서 실행합니다.
+    # Flask 서버를 별도 스레드로 먼저 띄우기 (봇 안 멈추게 하려고)
     def run_flask():
         app.run(host="0.0.0.0", port=5000, use_reloader=False)
-
+        
     Thread(target=run_flask).start()
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
     
-    # 여기서 봇을 실행 (디스코드 토큰은 환경변수로 받아오는 게 좋습니다)
-    bot.run(os.environ.get('DISCORD_TOKEN'))
+    # 봇이 메시지를 잘 받고 있는지 확인 (콘솔에 출력)
+    print(f"DEBUG: 메시지 감지됨 - {message.author}: {message.content}")
+    
+    # 이 부분이 없으면 명령어 처리가 안 됨! (혹시나 해서 넣는 것)
+    await bot.process_commands(message)
+
+# 봇 실행 전 마지막 확인
+print("DEBUG: 봇 실행 시작 전 명령어 목록:")
+for cmd in bot.commands:
+    print(f" - 명령어 감지됨: {cmd.name}")
+    
+    # 봇 실행 (여기가 핵심입니다!)
+    try:
+        bot.run("BOT_TOKEN")
+    except Exception as e:
+        print(f"봇 실행 오류: {e}")
