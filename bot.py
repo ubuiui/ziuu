@@ -63,10 +63,11 @@ stocks = {
 }
 
 def save_user_db(uid):
-    if users_col is None: return
-    # DB 저장 전 살짝 대기
-    # 이미 명령어에서 asyncio.sleep을 썼더라도 여기서도 0.1초 대기
-    users_col.update_one(
+    if users_col is None: 
+        return
+    
+    # 1. 데이터를 먼저 업데이트합니다.
+    result = users_col.update_one(
         {"_id": uid},
         {"$set": {
             "money": user_money.get(uid, 1000),
@@ -76,10 +77,10 @@ def save_user_db(uid):
         }},
         upsert=True
     )
-        if result.acknowledged:
-            print(f"✅ 유저 {uid} 데이터 DB 저장 완료!")
-    except Exception as e:
-        print(f"❌ DB 저장 오류: {e}")
+    
+    # 2. 결과 확인 코드를 윗줄과 정확히 맞췄습니다.
+    if result.acknowledged:
+        pass # 에러가 발생하지 않도록 정상 처리
 
 def load_all_data():
     global user_money, user_stocks, user_names, attendance_data, user_stats
