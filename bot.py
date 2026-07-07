@@ -972,6 +972,23 @@ async def DB저장(ctx):
 @commands.has_permissions(administrator=True)
 async def 청소(ctx, n: int): await ctx.channel.purge(limit=n + 1)
 
+@bot.event
+async def on_ready():
+    print(f"✅ {bot.user} 로그인 완료!")
+    
+    # 1. DB에서 데이터 불러오기
+    load_all_data() 
+    print("📥 데이터베이스 데이터 로드 완료.")
+    
+    # 2. 주식 변동 루프 시작 (이게 없으면 차트가 안 올라옵니다!)
+    if not update_stocks.is_running():
+        update_stocks.start()
+        print("🚀 주식 변동 시스템 루프가 시작되었습니다.")
+    else:
+        print("ℹ️ 루프가 이미 실행 중입니다.")
+
+# 봇 실행 (기존 bot.run 부분은 이 밑에 그대로 두세요)
+
 
 @app.route('/api/healthz')
 def health():
