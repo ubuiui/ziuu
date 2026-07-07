@@ -132,10 +132,6 @@ NEWS_DB = {
     ]
 }
 
-@update_stocks.before_loop
-async def before_update():
-    await bot.wait_until_ready() # 봇이 완전히 켜질 때까지 기다림
-
 # --- [주식 변동 시스템] ---
 @tasks.loop(minutes=3)
 async def update_stocks():
