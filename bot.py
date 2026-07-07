@@ -159,12 +159,7 @@ async def update_stocks():
             news_display = f"\n📢 **[경제 뉴스]** {news_template.format(name=target_stock)}\n🔥 **{target_stock} 주가 폭등!**"
         else:
             stocks[target_stock] = int(stocks[target_stock] * 0.75) # 25% 폭락
-            news_display = f"\n📢 **[경제 뉴스]** {news_template.format(name=target_stock)}\n💥 **{target_stock} 주가 폭락!**"
-
-@update_stocks.before_loop
-async def before_update():
-    await bot.wait_until_ready()
-            
+            news_display = f"\n📢 **[경제 뉴스]** {news_template.format(name=target_stock)}\n💥 **{target_stock} 주가 폭락!**"      
     
     # 3. 채널 알림
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
@@ -180,6 +175,10 @@ async def before_update():
         msg += "\n사용법: `!매수 [종목명] [수량]`"
         await channel.send(msg)
         await asyncio.sleep(2)
+
+@update_stocks.before_loop
+async def before_update():
+    await bot.wait_until_ready()
 
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
