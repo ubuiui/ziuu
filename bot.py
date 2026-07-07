@@ -1058,34 +1058,21 @@ def sync_user_data(uid, name="알수없음"):
 def health():
     return {"status": "ok"}, 200
 
-# --- [맨 아래에 이 코드를 붙여넣으세요] ---
-
 # 1. 봇 실행 함수
 if __name__ == "__main__":
-    # Flask 서버를 별도 스레드로 먼저 띄우기 (봇 안 멈추게 하려고)
+    # Flask 서버를 별도 스레드로 먼저 띄우기
     def run_flask():
-        app.run(host="0.0.0.0", port=5000, use_reloader=False)
-        
-    Thread(target=run_flask).start()
+        app.run(host="0.0.0.0", port=5000)
 
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    
-    # 봇이 메시지를 잘 받고 있는지 확인 (콘솔에 출력)
-    print(f"DEBUG: 메시지 감지됨 - {message.author}: {message.content}")
-    
-    # 이 부분이 없으면 명령어 처리가 안 됨! (혹시나 해서 넣는 것)
-    await bot.process_commands(message)
+    # 스레드 설정
+    t = Thread(target=run_flask)
+    t.daemon = True # 프로그램이 종료되면 Flask도 자동으로 꺼지게 함
+    t.start()
 
-# 봇 실행 전 마지막 확인
-print("DEBUG: 봇 실행 시작 전 명령어 목록:")
-for cmd in bot.commands:
-    print(f" - 명령어 감지됨: {cmd.name}")
-    
-    # 봇 실행 (여기가 핵심입니다!)
-    try:
-        bot.run("BOT_TOKEN")
-    except Exception as e:
-        print(f"봇 실행 오류: {e}")
+    # 봇 실행 (이게 없으면 봇이 안 켜집니다!)
+    # Render 환경변수(BOT_TOKEN)를 정확히 가져옵니다.
+    token = os.environ.get('BOT_TOKEN')
+    if token:
+        bot.run(token)
+    else:
+        print("❌ 에러: BOT_TOKEN 환경 변수가 설정되지 않았습니다!")
