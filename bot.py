@@ -88,7 +88,6 @@ def save_user_db(uid):
         upsert=True
     )
 
-
 @bot.command()
 @commands.is_owner() # 개발자만 사용 가능하게 설정
 async def 주소(ctx):
@@ -161,6 +160,10 @@ async def update_stocks():
         else:
             stocks[target_stock] = int(stocks[target_stock] * 0.75) # 25% 폭락
             news_display = f"\n📢 **[경제 뉴스]** {news_template.format(name=target_stock)}\n💥 **{target_stock} 주가 폭락!**"
+
+@update_stocks.before_loop
+async def before_update():
+    await bot.wait_until_ready()
             
     
     # 3. 채널 알림
@@ -177,10 +180,6 @@ async def update_stocks():
         msg += "\n사용법: `!매수 [종목명] [수량]`"
         await channel.send(msg)
         await asyncio.sleep(2)
-
-@update_stocks.before_loop
-async def before_update():
-    await bot.wait_until_ready()
 
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
