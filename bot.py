@@ -455,7 +455,7 @@ async def 경주(ctx, bet: int = 1000):
     if uid in game_states: return await ctx.send("이미 진행 중인 미니게임이 있습니다.")
 
     game_states[uid] = True
-    cars =F{"🔴👧 빨간예빈": 0, "🔵👧 파란예빈": 0, "🟢👧 초록예빈": 0, "🟡👧 노란예빈": 0}
+    cars = {"🔴👧 빨간예빈": 0, "🔵👧 파란예빈": 0, "🟢👧 초록예빈": 0, "🟡👧 노란예빈": 0}
     car_list = list(cars.keys())
     
     guide = await ctx.send(
