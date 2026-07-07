@@ -18,7 +18,12 @@ intents.members = True
 intents.presences = True
 NOTICE_CHANNEL_ID = 1523727776014794925
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+# 봇 선언 직후 (intents 설정 다음)
+bot = commands.Bot(command_prefix='!', intents=intents, reconnect=True)
+
+# 기존 변수들 밑에 추가
+force_next_event = False
+last_force_news_time = datetime.datetime.min # 초기값은 아주 오래된 시간
 
 # [중요] 절대 죽지 않는 DB 연결 로직
 client = None
@@ -64,8 +69,6 @@ gift_cooldowns = {}
 disaster_cooldowns = {}
 user_stats = {}
 user_profits = {}
-
-delisted_stocks = {}
 
 stocks = {
     "예빈닉스": 123000, "지유엔터": 15000, "헬프미": 8000, 
@@ -137,81 +140,74 @@ NEWS_DB = {
 # --- [주식 변동 시스템] ---
 @tasks.loop(minutes=3)
 async def update_stocks():
+    global force_next_event
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
-    now = datetime.datetime.now()
+    if not channel: return
     
-    # [핵심] 이번 턴의 이벤트 상태를 저장할 딕셔너리 (자동 초기화)
-    turn_status = {} 
+    # 1. 현재 가격을 백업 (등락 비교용)
+    old_prices = stocks.copy()
+    
+    now = datetime.datetime.now()
+    turn_status = {}
 
-    # 1. [재상장 로직]
+    # 2. 재상장 및 시장 변동 로직
     for stock_name, delist_time in list(delisted_stocks.items()):
         if now - delist_time >= datetime.timedelta(minutes=10):
             stocks[stock_name] = 1000
             del delisted_stocks[stock_name]
-            turn_status[stock_name] = "🔄 재상장" # 알림용
-            if channel:
-                await channel.send(f"🔄 **[시장 알림]** {stock_name}이(가) 시장에 다시 상장되었습니다! (시작가: 1,000원)")
 
-    # 2. 시장 변동 로직
     for stock in stocks:
-        if stock in delisted_stocks: continue 
-        change_rate = random.uniform(0.95, 1.05) 
+        if stock in delisted_stocks: continue
+        change_rate = random.uniform(0.90, 1.10) 
         stocks[stock] = max(0, int(stocks[stock] * change_rate))
 
-    # 3. 뉴스 및 상장폐지 이벤트
+    # 3. 뉴스 이벤트 (확률 50% 또는 관리자 강제)
     news_display = ""
-    if random.random() < 0.15:
+    # [관리자 명령 체크] 또는 확률 적용
+    if random.random() < 0.50 or force_next_event:
+        force_next_event = False # 실행 후 초기화
+        
         available_stocks = [s for s in stocks.keys() if s not in delisted_stocks]
         if available_stocks:
             target_stock = random.choice(available_stocks)
             news_type = random.choice(["호재", "악재"])
             
             if news_type == "호재":
-                rate = random.uniform(0.25, 0.40)
+                rate = random.uniform(0.20, 0.40)
                 stocks[target_stock] = int(stocks[target_stock] * (1 + rate))
-                turn_status[target_stock] = "🔥" # 호재 이모티콘
-                news_display = f"🔥 **{target_stock} 호재! (+{rate*100:.1f}%)**"
+                news_display = f"🔥 **{target_stock} 대형 호재 발생! (+{rate*100:.1f}%)**"
             else:
-                rate = random.uniform(0.25, 0.40)
+                rate = random.uniform(0.20, 0.40)
                 price_drop = int(stocks[target_stock] * (1 - rate))
-                
-                if price_drop <= 0:
+                if price_drop <= 500:
                     delisted_stocks[target_stock] = datetime.datetime.now()
                     stocks[target_stock] = 0
-                    turn_status[target_stock] = "💀" # 상폐 이모티콘
-                    
-                    # 유저 보유 주식 0 처리
-                    for uid in user_stocks:
-                        if target_stock in user_stocks[uid]:
-                            user_stocks[uid][target_stock]["qty"] = 0
-                            save_user_db(uid)
                     news_display = f"💀 **{target_stock} 상장폐지!**"
                 else:
                     stocks[target_stock] = price_drop
-                    turn_status[target_stock] = "💥" # 악재 이모티콘
-                    news_display = f"💥 **{target_stock} 악재! (-{rate*100:.1f}%)**"
+                    news_display = f"💥 **{target_stock} 악재 발생! (-{rate*100:.1f}%)**"
 
-    # 4. 결과 출력 (가독성 향상)
-    if channel:
-        embed = discord.Embed(title="📊 실시간 시장 보고", color=discord.Color.blue())
-        market_msg = ""
-        for name, price in stocks.items():
-            # 상태 표시: 상폐면 💀, 그 외엔 turn_status에 등록된 이모티콘 표시
-            if name in delisted_stocks:
-                status_emoji = "💀"
-                price_text = "상장폐지"
-            else:
-                status_emoji = turn_status.get(name, "⬜") # 이벤트 없으면 기본 공백
-                price_text = f"{price:,}원"
+    # 4. 이모티콘 결정 (old_prices와 비교)
+    embed = discord.Embed(title="📊 실시간 시장 보고", color=discord.Color.blue())
+    market_msg = ""
+    for name, price in stocks.items():
+        if name in delisted_stocks:
+            market_msg += f"💀 **{name}**: 상장폐지\n"
+            continue
             
-            market_msg += f"{status_emoji} **{name}**: {price_text}\n"
+        old_p = old_prices.get(name, 0)
+        # 등락 비교
+        if price > old_p: emoji = "📈"
+        elif price < old_p: emoji = "📉"
+        else: emoji = "➖"
         
-        embed.description = market_msg
-        if news_display:
-            embed.add_field(name="📢 오늘의 이슈", value=news_display, inline=False)
-        embed.set_footer(text="사용법: !매수 [종목명] [수량]")
-        
-        await channel.send(embed=embed)
+        market_msg += f"{emoji} **{name}**: {price:,}원\n"
+    
+    embed.description = market_msg
+    if news_display:
+        embed.add_field(name="📢 오늘의 이슈", value=news_display, inline=False)
+    
+    await channel.send(embed=embed)
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
 # ==========================================
@@ -921,6 +917,23 @@ async def 정보(ctx, m: discord.Member = None):
     embed.set_footer(text=f"조회 관리자: {ctx.author.name}")
     
     await ctx.send(embed=embed)
+
+# --- 관리자 전용 : 호재악재 강제 실행 ---
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def ㅇㅇ(ctx):
+    global force_next_event, last_force_news_time
+    now = datetime.datetime.now()
+    
+    # 2시간 쿨타임 체크 (timedelta(hours=1))
+    if now - last_force_news_time < datetime.timedelta(hours=1):
+        remaining = datetime.timedelta(hours=1) - (now - last_force_news_time)
+        minutes_left = int(remaining.total_seconds() / 60)
+        return await ctx.send(f"❌ **쿨타임 중입니다.** {minutes_left}분 뒤에 사용 가능합니다.")
+    
+    force_next_event = True
+    last_force_news_time = now
+    await ctx.send("✅ **다음 턴에 무조건 시장 이벤트(호재/악재)가 발생하도록 예약했습니다!**")
 
 
 # --- 👑 관리자 전용: 유저 전체 데이터 조회 ---
