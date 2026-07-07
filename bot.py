@@ -63,18 +63,19 @@ stocks = {
 }
 
 def save_user_db(uid):
-    try:
-        result = users_col.update_one(
-            {"_id": uid},
-            {"$set": {
-                "money": user_money.get(uid, 1000),
-                "stocks": user_stocks.get(uid, {}),
-                "name": user_names.get(uid, "알수없음"),
-                "attendance": attendance_data.get(uid, {"streak": 0, "total": 0, "last_date": ""}),
-                "stats": user_stats.get(uid, {"atk": 10, "lvl": 1, "強化": 0, "dungeon_floor": 1})
-            }},
-            upsert=True
-        )
+    if users_col is None: return
+    # DB 저장 전 살짝 대기
+    # 이미 명령어에서 asyncio.sleep을 썼더라도 여기서도 0.1초 대기
+    users_col.update_one(
+        {"_id": uid},
+        {"$set": {
+            "money": user_money.get(uid, 1000),
+            "stocks": user_stocks.get(uid, {}),
+            "name": user_names.get(uid, "알수없음"),
+            "attendance": attendance_data.get(uid, {"streak": 0, "last_date": ""})
+        }},
+        upsert=True
+    )
         if result.acknowledged:
             print(f"✅ 유저 {uid} 데이터 DB 저장 완료!")
     except Exception as e:
@@ -133,7 +134,7 @@ NEWS_DB = {
 }
 
 # --- [주식 변동 시스템] ---
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=3)
 async def update_stocks():
     # 1. 기본 변동 (일반적인 시장 등락)
     for stock in stocks:
@@ -171,6 +172,7 @@ async def update_stocks():
             
         msg += "\n사용법: `!매수 [종목명] [수량]`"
         await channel.send(msg)
+        await asyncio.sleep(2)
 
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
@@ -179,6 +181,7 @@ async def update_stocks():
 @bot.command()
 async def 매수(ctx, name: str, qty: int):
     uid = ctx.author.id
+    await asyncio.sleep(0.3)
     if name not in stocks or qty <= 0:
         return await ctx.send("❌ 존재하지 않는 종목이거나 잘못된 수량입니다.")
     
@@ -202,6 +205,12 @@ async def 매수(ctx, name: str, qty: int):
     save_user_db(uid)
     
     await ctx.send(f"✅ {name} {qty}주 매수 완료! (평단가: {int(new_avg):,}원)")
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandInvokeError):
+        if isinstance(error.original, discord.errors.HTTPException) and error.original.status == 429:
+            await ctx.send("⚠️ 디스코드 API 제한에 걸렸습니다. 10초만 기다려 주세요!")
 
 # --- 보유 주식 확인 기능 ---
 @bot.command()
@@ -252,6 +261,7 @@ async def 내정보(ctx):
 @bot.command()
 async def 매도(ctx, name: str, qty: int):
     uid = ctx.author.id
+    await asyncio.sleep(0.3)
     # 1. 예외 처리
     if name not in user_stocks.get(uid, {}) or user_stocks[uid][name]["qty"] < qty:
         return await ctx.send("❌ 보유 중인 주식이 없거나 수량이 부족합니다.")
@@ -733,8 +743,6 @@ async def 사다리(ctx, bet: int = None, *, args: str = None):
     
     await ctx.send(content=f"🔔 {winner.mention} 축하합니다! 판돈을 모두 획득하셨습니다!", embed=embed)
 
-    save_user_db(uid)
-
 # --- 🎰 미니게임 5: 멀티 룰렛 배팅 게임 (출력 간소화 반영) ---
 @bot.command()
 async def 룰렛(ctx, bet: int = None, *, args: str = None):
@@ -772,8 +780,6 @@ async def 룰렛(ctx, bet: int = None, *, args: str = None):
     result_embed.add_field(name="🏆 최종 승리자", value=f"🎉 {winner.mention} 님 전액 독식!!\n상금 **{total_pool:,}원**을 획득하셨습니다! (최종 잔액: {user_money[winner.id]:,}원)", inline=False)
     
     await msg.edit(content=f"🔔 {winner.mention} 축하합니다! 대박 룰렛의 주인공이 되셨습니다!", embed=result_embed)
-
-    save_user_db(uid)
 
 # --- ❤️ [신규 미니게임 6] 실시간 중계형 멀티 소개팅 배팅 게임 ---
 @bot.command()
@@ -907,6 +913,7 @@ async def 재난지원금(ctx):
 # --- 💸 유저 간 실시간 송금 시스템 ---
 @bot.command()
 async def 송금(ctx, receiver: discord.Member, amount: int):
+    await asyncio.sleep(0.3)
     sender = ctx.author
     
     # 1. 예외 처리: 자기 자신 송금 불가 및 0원 이하 방지
@@ -999,25 +1006,18 @@ async def 랭킹(ctx):
     embed.set_footer(text="꾸준한 출석과 도박 한탕으로 타이틀을 쟁탈해 보세요!")
     await ctx.send(embed=embed)
 
-    save_user_db(uid)
-
-# --- 📊 데이터 조회 시스템 ---
-@bot.command()
-async def 데이터(ctx):
-    uid = ctx.author.id
-    money = user_money.get(uid, 1000)
-    await ctx.send(f"📋 **{ctx.author.name}**님의 현재 자고 있는 자산은 **{money:,}원**입니다.")
-
-
 @bot.event
 async def on_ready():
-    print(f"✅ {bot.user} 온라인! 데이터를 불러오는 중...")
-    load_all_data() # 데이터 로드
-    print("✅ 모든 명령어와 데이터가 준비되었습니다.")
-
-    # 루프 작업 시작
-    if not update_stocks.is_running(): update_stocks.start()
-    if not treasure_event.is_running(): treasure_event.start()
+    print(f"✅ 봇 연결 성공: {bot.user}")
+    load_all_data()
+    print("💾 데이터 로드 완료.")
+    
+    # 루프 시작 전 충분한 여유 시간
+    await asyncio.sleep(15) 
+    
+    if not update_stocks.is_running():
+        update_stocks.start()
+        print("📈 주식 루프 시작.")
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
