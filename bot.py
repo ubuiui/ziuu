@@ -122,7 +122,7 @@ async def start_double_or_nothing(ctx, current_money, step=0):
 
 stocks = {
     "예빈닉스": 10816, "지유엔터": 10489, "헬프미": 10263, 
-    "명철수산": 10827, "찬우상사": 10841, "예원데이터": 15909, 
+    "명철수산": 10827, "찬우상사": 10841, "예원데이터": 15909, "만상인터넷": 11004
     "민지유건설": 13725, "피브테크": 10680, "루카드림": 12321, "우뱅미디어": 14896,
     "어둠반도체": 10513, "여름전자": 10341, "해나물류": 10519, "헤응인터내셔널": 11215
 }
@@ -202,75 +202,59 @@ async def update_stocks():
             del delisted_stocks[name]
             await channel.send(f"🔄 **{name}** 주식이 시장에 재상장되었습니다!")
 
-    # 2. 시장 변동 계산 및 리포트 작성 (Embed UI)
-    report_desc = ""
-    for stock in list(stocks.keys()):
-        if stock in delisted_stocks: continue
-        
-        old_p = stocks[stock]
-        up_chance = 0.55 if old_p < 10000 else (0.45 if old_p > 50000 else 0.50)
-        rate = random.uniform(1.01, 1.06) if random.random() < up_chance else random.uniform(0.94, 0.99)
-        new_p = int(old_p * rate)
-        
-        # 등락률 계산 및 아이콘 설정
-        diff_percent = ((new_p - old_p) / old_p) * 100
-        if new_p > old_p:
-            icon = "📈"
-            percent_text = f"+{diff_percent:.2f}%"
-        elif new_p < old_p:
-            icon = "📉 "
-            percent_text = f"{diff_percent:.2f}%"
-        else:
-            icon = "➖"
-            percent_text = "0.00%"
-            
-        report_desc += f"{icon} **{stock}** | `{old_p:,}원` → `{new_p:,}원` (`{percent_text}`)\n"
-        stocks[stock] = new_p
-        
-        # 차트 기록 저장 및 20개 자동 유지 로직
-        db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now()})
-        if db["price_history"].count_documents({"name": stock}) > 20:
-            oldest = db["price_history"].find({"name": stock}).sort("time", 1).limit(1)
-            for doc in oldest:
-                db["price_history"].delete_one({"_id": doc["_id"]})
-
-    # 리포트 전송 (Embed)
-    embed = discord.Embed(title="📊 실시간 시장 변동 리포트", description=report_desc, color=discord.Color.gold())
-    embed.set_footer(text="3분마다 시장 상황이 자동 갱신됩니다.")
-    await channel.send(embed=embed)
-
-    # 3. 뉴스 이벤트 (확률적 발생)
+    # 2. 뉴스 이벤트 발생
     if random.random() < 0.2 or force_next_event:
         force_next_event = False
         target = random.choice([s for s in stocks if s not in delisted_stocks])
         is_good = random.random() < 0.5
         
+        # 가격 변경
+        change_rate = random.uniform(0.15, 0.40)
+        stocks[target] = int(stocks[target] * (1 + change_rate)) if is_good else int(stocks[target] * (1 - change_rate))
+        
+        # 즉시 DB 기록
+        db["price_history"].insert_one({"name": target, "price": stocks[target], "time": datetime.datetime.now()})
+        
+        # 뉴스 전송
         category = "호재" if is_good else "악재"
         news_text = random.choice(NEWS_DB[category]).format(name=target)
-        
         embed = discord.Embed(
-            title="📢 [속보]", 
-            description=f"{'🔴' if is_good else '🔵'} **[{'호재!' if is_good else '악재!'}]**\n\n{news_text}\n\n이로 인해 **{'급등' if is_good else '급락'}** 할 것으로 보입니다!", 
+            title="📢 [예빈뉴스 긴급속보!]", 
+            description=f"{'🔴' if is_good else '🔵'} **[{category} 발생!]**\n\n{news_text}\n\n현재가: `{stocks[target]:,}원`", 
             color=discord.Color.red() if is_good else discord.Color.blue()
         )
         await channel.send(embed=embed)
-        
-        change_rate = random.uniform(0.15, 0.40)
-        if is_good: 
-            stocks[target] = int(stocks[target] * (1 + change_rate))
-        else:
-            stocks[target] = int(stocks[target] * (1 - change_rate))
-            
-            # 상장폐지 로직
-            if stocks[target] <= 1000 and random.random() < 0.05:
-                delisted_stocks[target] = datetime.datetime.now()
-                mentions = [f"<@{uid}>" for uid, portfolio in user_stocks.items() if target in portfolio]
-                await channel.send(f"⚠️ **{target} 상장폐지!** {' '.join(mentions)}\n보유하신 주식이 휴지 조각이 되었습니다.")
-                for uid in [u for u, s in user_stocks.items() if target in s]:
-                    del user_stocks[uid][target]
-                    save_user_db(uid)
-                del stocks[target]
 
+        # 악재일 경우 상장폐지 체크
+        if not is_good and stocks[target] <= 1000 and random.random() < 0.3:
+            delisted_stocks[target] = datetime.datetime.now()
+            await channel.send(f"⚠️ **{target} 상장폐지!** 보유하신 주식이 연속된 주가하락으로 상장폐지 되었습니다.")
+            del stocks[target]
+
+    # 3. 시장 변동 계산 및 리포트 작성
+    report_desc = ""
+    for stock in list(stocks.keys()):
+        if stock in delisted_stocks: continue
+        
+        old_p = stocks[stock]
+        rate = random.uniform(1.01, 1.06) if random.random() < 0.5 else random.uniform(0.94, 0.99)
+        new_p = int(old_p * rate)
+        
+        diff_percent = ((new_p - old_p) / old_p) * 100
+        icon = "📈" if new_p > old_p else ("📉" if new_p < old_p else "➖")
+        report_desc += f"{icon} **{stock}** | `{old_p:,}원` → `{new_p:,}원` (`{diff_percent:+.2f}%`)\n"
+        
+        stocks[stock] = new_p
+        db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now()})
+        
+        # 자동 유지 로직 (데이터 20개 제한)
+        if db["price_history"].count_documents({"name": stock}) > 20:
+            oldest = db["price_history"].find({"name": stock}).sort("time", 1).limit(1)
+            for doc in oldest: db["price_history"].delete_one({"_id": doc["_id"]})
+
+    # 4. 리포트 전송
+    embed = discord.Embed(title="📊 실시간 시장 변동 리포트", description=report_desc, color=discord.Color.gold())
+    await channel.send(embed=embed)
 # --- 주식 그래프 ---
 @bot.command()
 async def 차트(ctx, name: str):
@@ -882,40 +866,30 @@ async def 공지(ctx, *, args: str = None):
 # --- 🏆 통합 랭킹 시스템 ---
 @bot.command(name="랭킹")
 async def 랭킹(ctx):
-    try:
-        # DB에서 유저 데이터 전체 로드
-        all_users = list(users_col.find({}))
-        if not all_users:
-            return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
+    all_users = list(users_col.find({}))
+    if not all_users: return await ctx.send("데이터가 없습니다.")
 
-        ranking_data = []
-        for u in all_users:
-            money = u.get("money", 1000)
-            st = u.get("stocks", {})
-            # 주식 현재가 계산
-            stock_val = sum([stocks.get(name, 0) * count for name, count in st.items() if name in stocks])
-            
-            ranking_data.append({
-                "name": u.get("name", "알수없음"),
-                "total": money + stock_val,
-                "profit": u.get("profit", 0),
-                "att": u.get("attendance", {}).get("total", 0)
-            })
+    ranking_data = []
+    for u in all_users:
+        stock_val = sum([stocks.get(n, 0) * c for n, c in u.get("stocks", {}).items() if n in stocks])
+        ranking_data.append({
+            "name": u.get("name", "유저"),
+            "total": u.get("money", 1000) + stock_val,
+            "profit": u.get("profit", 0),
+            "att": u.get("attendance", {}).get("total", 0)
+        })
 
-        # 정렬
-        sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
-        sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
-        attendance_rank = sorted([r for r in ranking_data if r['att'] > 0], key=lambda x: x['att'], reverse=True)
-        top_att = attendance_rank[0] if attendance_rank else None
-
-        embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
-        
-        # 자산 랭킹
-        m_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
-        embed.add_field(name="💰 최고의 자산가 TOP 3", value=m_text, inline=False)
-        
-        # 수익왕
-        p_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{
+    sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
+    sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
+    
+    medals = ['🥇', '🥈', '🥉']
+    m_text = "\n".join([f"{medals[i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
+    p_text = "\n".join([f"{medals[i]} {r['name']}: `{r['profit']:,}원`" for i, r in enumerate(sorted_profit)])
+    
+    embed = discord.Embed(title="🏆 서버 통합 랭킹", color=discord.Color.gold())
+    embed.add_field(name="💰 자산 TOP 3", value=m_text, inline=False)
+    embed.add_field(name="📈 수익왕 TOP 3", value=p_text, inline=False)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
