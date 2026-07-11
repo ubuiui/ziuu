@@ -355,29 +355,51 @@ async def on_command_error(ctx, error):
         if isinstance(error.original, discord.errors.HTTPException) and error.original.status == 429:
             await ctx.send("⚠️ 디스코드 API 제한에 걸렸습니다. 10초만 기다려 주세요!")
 
+# -- 내정보 기능 --
+def clean_user_delisted_stocks(uid):
+    """사용자가 보유한 주식 중 상장폐지된 종목을 자동으로 삭제하고 DB를 업데이트합니다."""
+    if uid in user_stocks:
+        # 삭제 대상: 현재 시장(stocks)에 없고, 재상장 대기 중(delisted_stocks)도 아닌 종목
+        keys_to_delete = [
+            name for name in user_stocks[uid].keys() 
+            if name not in stocks and name not in delisted_stocks
+        ]
+        
+        if keys_to_delete:
+            for name in keys_to_delete:
+                del user_stocks[uid][name]
+            
+            # 삭제가 발생했다면 반드시 DB에 즉시 반영
+            save_user_db(uid) 
+
 @bot.command(name="내정보")
 async def 내정보(ctx):
     uid = ctx.author.id
     
-    # 1. 사용자 데이터 동기화
+    # 1. 최신 데이터 동기화
     sync_user_data(uid, ctx.author.name)
     
-    # 2. 상장폐지된 '찌꺼기' 데이터 정리 (에러 방지 핵심!)
+    # 2. [핵심] 정보를 보여주기 전에 상폐된 주식 먼저 청소
     clean_user_delisted_stocks(uid)
     
-    # 3. 안전하게 데이터 가져오기
     stocks_list = user_stocks.get(uid, {})
     
-    # 4. 주식 정보 텍스트 생성
+    # 3. 안전하게 주식 목록 문자열 생성 (데이터 구조 호환성 유지)
     stock_text_list = []
     for name, data in stocks_list.items():
-        # 데이터가 딕셔너리(새 구조)인지 숫자인지 체크하여 안전하게 출력
-        qty = data.get('qty', 0) if isinstance(data, dict) else data
-        stock_text_list.append(f"**{name}**: {qty:,}주")
+        # 데이터가 딕셔너리 구조면 'qty'를, 아니면 단순 숫자로 처리
+        if isinstance(data, dict):
+            qty = data.get('qty', 0)
+        else:
+            qty = data  # 과거 데이터 대응
+            
+        # 보유 수량이 0보다 클 때만 표시
+        if qty > 0:
+            stock_text_list.append(f"**{name}**: {qty:,}주")
     
     stock_str = "\n".join(stock_text_list) if stock_text_list else "보유 주식 없음"
     
-    # 5. 임베드 출력
+    # 4. 임베드 출력
     embed = discord.Embed(title=f"👤 {user_names.get(uid, '알수없음')}님의 정보", color=discord.Color.blue())
     embed.add_field(name="💰 보유 현금", value=f"{user_money.get(uid, 0):,}원", inline=False)
     embed.add_field(name="📈 보유 주식", value=stock_str, inline=False)
