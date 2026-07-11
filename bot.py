@@ -114,8 +114,6 @@ async def start_double_or_nothing(ctx, current_money, step=0):
         await ask_next_game(ctx)
 
 
-# ... 그 아래부터는 기존에 작성하신 @bot.command() 들을 그대로 두시면 됩니다.
-
 stocks = {
     "예빈닉스": 123000, "지유엔터": 15000, "헬프미": 8000, 
     "명철수산": 12000, "찬우상사": 9500, "예원데이터": 25000, 
@@ -190,70 +188,47 @@ async def update_stocks():
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if not channel: return
     
-    # 1. 현재 가격을 백업 (등락 비교용)
-    old_prices = stocks.copy()
-    
-    now = datetime.datetime.now()
-    turn_status = {}
+    # [1] 재상장
+    for name, delist_time in list(delisted_stocks.items()):
+        if datetime.datetime.now() - delist_time >= datetime.timedelta(minutes=10):
+            stocks[name] = random.randint(1000, 10000)
+            del delisted_stocks[name]
 
-    # 2. 재상장 및 시장 변동 로직
-    for stock_name, delist_time in list(delisted_stocks.items()):
-        if now - delist_time >= datetime.timedelta(minutes=10):
-            stocks[stock_name] = 1000
-            del delisted_stocks[stock_name]
-
+    # [2] 시장 변동
     for stock in stocks:
         if stock in delisted_stocks: continue
-        change_rate = random.uniform(0.90, 1.10) 
-        stocks[stock] = max(0, int(stocks[stock] * change_rate))
+        current_p = stocks[stock]
+        up_chance = 0.55 if current_p < 10000 else (0.45 if current_p > 50000 else 0.50)
+        rate = random.uniform(1.01, 1.06) if random.random() < up_chance else random.uniform(0.94, 0.99)
+        stocks[stock] = int(stocks[stock] * rate)
 
-    # 3. 뉴스 이벤트 (확률 50% 또는 관리자 강제)
-    news_display = ""
-    # [관리자 명령 체크] 또는 확률 적용
+    # [3] 뉴스 이벤트
     if random.random() < 0.2 or force_next_event:
-        force_next_event = False # 실행 후 초기화
+        force_next_event = False
+        target = random.choice([s for s in stocks if s not in delisted_stocks])
+        is_high = stocks[target] > 50000
+        is_good = random.random() < (0.3 if is_high else 0.6)
         
-        available_stocks = [s for s in stocks.keys() if s not in delisted_stocks]
-        if available_stocks:
-            target_stock = random.choice(available_stocks)
-            news_type = random.choice(["호재", "악재"])
-            
-            if news_type == "호재":
-                rate = random.uniform(0.20, 0.40)
-                stocks[target_stock] = int(stocks[target_stock] * (1 + rate))
-                news_display = f"🔥 **{target_stock} 대형 호재 발생! (+{rate*100:.1f}%)**"
-            else:
-                rate = random.uniform(0.20, 0.40)
-                price_drop = int(stocks[target_stock] * (1 - rate))
-                if price_drop <= 500:
-                    delisted_stocks[target_stock] = datetime.datetime.now()
-                    stocks[target_stock] = 0
-                    news_display = f"💀 **{target_stock} 상장폐지!**"
-                else:
-                    stocks[target_stock] = price_drop
-                    news_display = f"💥 **{target_stock} 악재 발생! (-{rate*100:.1f}%)**"
+        news_entry = list(db["news_db"].find({"type": "good" if is_good else "bad"}))
+        news_text = random.choice(news_entry)["text"] if news_entry else ("호재 발생!" if is_good else "악재 발생!")
+        
+        embed = discord.Embed(title="📢 [속보]", description=f"{'🔴' if is_good else '🔵'} **[{'호재!' if is_good else '악재!'}]**\n\n{target} 주식이 '{news_text}'로 인해 **{'급등' if is_good else '급락'}** 할 것으로 보입니다!", color=discord.Color.red() if is_good else discord.Color.blue())
+        await channel.send(embed=embed)
+        
+        change_rate = random.uniform(0.15, 0.40)
+        if is_good: stocks[target] = int(stocks[target] * (1 + change_rate))
+        else:
+            stocks[target] = int(stocks[target] * (1 - change_rate))
+            if stocks[target] <= 1000 and random.random() < 0.05:
+                delisted_stocks[target] = datetime.datetime.now()
+                mentions = [f"<@{uid}>" for uid, portfolio in user_stocks.items() if target in portfolio]
+                if mentions:
+                    await channel.send(f"⚠️ **{target} 상장폐지!** {' '.join(mentions)}\n보유하신 주식이 상장폐지 되어 강제 청산되었습니다.")
+                for uid in [u for u, s in user_stocks.items() if target in s]:
+                    del user_stocks[uid][target]
+                    save_user_db(uid)
+                del stocks[target]
 
-    # 4. 이모티콘 결정 (old_prices와 비교)
-    embed = discord.Embed(title="📊 실시간 시장 보고", color=discord.Color.blue())
-    market_msg = ""
-    for name, price in stocks.items():
-        if name in delisted_stocks:
-            market_msg += f"💀 **{name}**: 상장폐지\n"
-            continue
-            
-        old_p = old_prices.get(name, 0)
-        # 등락 비교
-        if price > old_p: emoji = "📈"
-        elif price < old_p: emoji = "📉"
-        else: emoji = "➖"
-        
-        market_msg += f"{emoji} **{name}**: {price:,}원\n"
-    
-    embed.description = market_msg
-    if news_display:
-        embed.add_field(name="📢 오늘의 이슈", value=news_display, inline=False)
-    
-    await channel.send(embed=embed)
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
 # ==========================================
@@ -296,7 +271,7 @@ async def on_command_error(ctx, error):
 @bot.command()
 async def 내정보(ctx):
     uid = ctx.author.id
-    sync_user_data(uid, ctx.author.name) # 데이터 동기화
+    sync_user_data(uid, ctx.author.name)
     
     money = user_money.get(uid, 1000)
     stocks_info = user_stocks.get(uid, {})
@@ -407,7 +382,8 @@ async def play_blackjack(ctx, bet):
                 p_s, d_s = get_score(data['p']), get_score(data['d'])
                 if d_s > 21 or p_s > d_s:
                     await main_msg.edit(embed=create_embed(uid, data, "🏆 승리!", is_final=True))
-                    await start_double_or_nothing(ctx, data['bet'], step=0)
+                    win_amount = data['bet'] * 2
+                    await start_double_or_nothing(ctx, win_amount, step=0)
                 elif p_s == d_s:
                     await main_msg.edit(embed=create_embed(uid, data, "🤝 무승부", is_final=True))
                     await ask_next_game(ctx)
@@ -693,25 +669,28 @@ async def 소개팅(ctx, bet: int = None):
 @bot.command()
 async def 출석(ctx):
     uid = ctx.author.id
+    # 현재 시간 기준 날짜
     today = datetime.date.today().isoformat()
     
-    # 1. 데이터 초기화 및 출석 로직
     if uid not in attendance_data:
         attendance_data[uid] = {"streak": 0, "total": 0, "last_date": ""}
     
-    if attendance_data[uid]["last_date"] == today:
-        return await ctx.send("❌ 오늘은 이미 출석하셨습니다.")
+    # [핵심] 오늘 이미 출석했는지 정확히 확인
+    if attendance_data[uid].get("last_date") == today:
+        return await ctx.send("❌ 오늘은 이미 출석하셨습니다. 내일 다시 시도해주세요!")
     
-    # 출석 처리
-    attendance_data[uid]["streak"] += 1
+    # 연속 출석 체크 (어제 출석했는지 확인)
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    if attendance_data[uid].get("last_date") != yesterday:
+        attendance_data[uid]["streak"] = 1 # 끊겼으면 1일부터 시작
+    else:
+        attendance_data[uid]["streak"] += 1
+        
     attendance_data[uid]["total"] += 1
     attendance_data[uid]["last_date"] = today
     user_money[uid] = user_money.get(uid, 1000) + 500
-    user_names[uid] = ctx.author.name
     
-    # [핵심] DB 저장
     save_user_db(uid)
-    
     await ctx.send(f"✅ 출석 완료! (+500원) 현재 연속 출석: {attendance_data[uid]['streak']}일째")
 
 # --- 🎁 신규 기능: 10분 주기 랜덤 선물 기능 ---
@@ -813,17 +792,28 @@ async def 공지(ctx, *, args: str = None):
 # --- 🏆 통합 랭킹 시스템 ---
 @bot.command()
 async def 랭킹(ctx):
-    embed = discord.Embed(title="👑 예빈이네 명예의 전당 👑", color=discord.Color.gold())
+    # DB에서 돈(money) 순서대로 상위 5명 불러오기
+    cursor = users_col.find().sort("money", -1).limit(5)
+    
+    embed = discord.Embed(title="👑 서버 자산 랭킹 TOP 5", color=discord.Color.gold())
+    rank_text = ""
+    for idx, doc in enumerate(cursor):
+        name = doc.get("name", "알수없음")
+        money = doc.get("money", 0)
+        rank_text += f"{idx+1}위: {name} - `{money:,}원`\n"
+    
+    embed.description = rank_text if rank_text else "데이터가 없습니다."
+    await ctx.send(embed=embed)
 
+    # 자산 랭킹
     sorted_money = sorted(user_money.items(), key=lambda x: x[1], reverse=True)[:3]
     money_text = ""
     money_emojis = ["🥇", "🥈", "🥉"]
     for idx, (uid, money) in enumerate(sorted_money):
-        name = user_names.get(uid, f"유저({uid})")
+        name = user_names.get(uid, "알수없는유저")
         money_text += f"{money_emojis[idx]} **{idx+1}위** - {name} : `{money:,}원`\n"
-    if not money_text: money_text = "기록이 없습니다."
-    embed.add_field(name="💰 서버 최고의 자산가 TOP 3", value=money_text, inline=False)
-
+    
+    embed.add_field(name="💰 서버 최고의 자산가 TOP 3", value=money_text or "데이터 없음", inline=False)
     attendance_kings = sorted(attendance_data.items(), key=lambda x: x[1]["total"], reverse=True)
     att_text = "아직 출석체크 데이터가 없습니다."
     if attendance_kings:
@@ -855,9 +845,6 @@ async def 랭킹(ctx):
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
-
-@bot.command()
-async def 잔액(ctx): await ctx.send(f"💰 {ctx.author.name}님의 총 자산은 {user_money.get(ctx.author.id, 1000):,}원입니다.")
 
 # --- 📢 대신 말하기 기능 ---
 @bot.command()
