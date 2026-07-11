@@ -862,27 +862,31 @@ async def 랭킹(ctx):
     # 1. DB에서 모든 유저 데이터 가져오기
     all_users = list(users_col.find({}))
     if not all_users:
-        return await ctx.send("데이터가 없습니다.")
+        return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
 
-    # 2. 데이터 가공 (총자산 = 현금 + 주식가치)
+    # 2. 데이터 가공 (총자산 = 현금 + 보유주식 가치)
     ranking_data = []
     for u in all_users:
         uid = u["_id"]
         money = u.get("money", 1000)
         st = u.get("stocks", {})
-        # 현재 주식 가격 기준 가치 계산
+        
+        # 현재 주식 가격 기준 총 자산 계산
         stock_val = sum([stocks.get(name, 0) * count for name, count in st.items()])
         ranking_data.append({
             "name": u.get("name", "알수없음"),
             "total": money + stock_val,
             "profit": u.get("profit", 0),
-            "att": u.get("attendance", {"total": 0})["total"]
+            "att": u.get("attendance", {}).get("total", 0)
         })
 
-    # 3. 정렬 함수
+    # 3. 정렬 로직
     sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
     sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
-    top_att = max(ranking_data, key=lambda x: x["att"])
+    
+    # 출첵왕 찾기 (데이터가 있는 경우에만)
+    attendance_rank = sorted([r for r in ranking_data if r['att'] > 0], key=lambda x: x['att'], reverse=True)
+    top_att = attendance_rank[0] if attendance_rank else None
 
     # 4. 임베드 작성
     embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
@@ -893,12 +897,13 @@ async def 랭킹(ctx):
     
     # 수익왕 랭킹
     p_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{r['profit']:,}원`" for i, r in enumerate(sorted_profit)])
-    embed.add_field(name="📈 주식 수익왕 TOP 3", value=p_text or "기록 없음", inline=False)
+    embed.add_field(name="📈 주식 수익왕 TOP 3", value=p_text if p_text else "기록 없음", inline=False)
     
     # 출첵왕
-    embed.add_field(name="🔥 성실 보스! 출첵왕", value=f"📅 {top_att['name']}님 (`{top_att['att']}회 출석`)", inline=False)
+    att_val = f"📅 {top_att['name']}님 (`{top_att['att']}회 출석`)" if top_att else "데이터 없음"
+    embed.add_field(name="🔥 성실 보스! 출첵왕", value=att_val, inline=False)
 
-    embed.set_footer(text="꾸준한 노력으로 상위권에 도전하세요!")
+    embed.set_footer(text="꾸준한 투자와 출석으로 순위를 올려보세요!")
     await ctx.send(embed=embed)
 
 @bot.command()
