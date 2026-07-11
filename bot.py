@@ -195,12 +195,25 @@ async def update_stocks():
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if not channel: return
     
-    # 1. 관리자 강제 상장폐지 처리 (루프 최상단에서 즉시 처리)
+    # 1. 관리자 강제 상장폐지 처리
     if to_be_delisted:
         for name in list(to_be_delisted):
             if name in stocks:
+                # 보상금 지급 로직 (관리자 상폐 시에도 지급)
+                compensation_msg = ""
+                for uid, portfolio in user_stocks.items():
+                    if name in portfolio:
+                        data = portfolio[name]
+                        qty = data.get('qty', 0) if isinstance(data, dict) else 0
+                        avg_p = data.get('avg_price', 0) if isinstance(data, dict) else 0
+                        refund = int(qty * avg_p * 0.1)
+                        if refund > 0:
+                            user_money[uid] = user_money.get(uid, 1000) + refund
+                            users_col.update_one({"_id": uid}, {"$inc": {"money": refund}}) # DB 동기화
+                            compensation_msg += f"<@{uid}> "
+                
+                await channel.send(f"🚨 **관리자 명령:** {name} 주식이 시장에서 강제 퇴출되었습니다.\n보유자 보상금 지급 대상: {compensation_msg if compensation_msg else '없음'}")
                 del stocks[name]
-                await channel.send(f"🚨 **관리자 명령:** {name} 주식이 시장에서 강제 퇴출되었습니다.")
         to_be_delisted = []
 
     # 2. 재상장 로직
@@ -237,8 +250,10 @@ async def update_stocks():
                     qty = data.get('qty', 0) if isinstance(data, dict) else 0
                     avg_p = data.get('avg_price', 0) if isinstance(data, dict) else 0
                     refund = int(qty * avg_p * 0.1)
-                    user_money[uid] = user_money.get(uid, 1000) + refund
-                    compensation_msg += f"<@{uid}> "
+                    if refund > 0:
+                        user_money[uid] = user_money.get(uid, 1000) + refund
+                        users_col.update_one({"_id": uid}, {"$inc": {"money": refund}}) # DB 동기화
+                        compensation_msg += f"<@{uid}> "
             
             embed = discord.Embed(title=f"🚨 [충격!] {target} 상장폐지!", description=f"경영진의 횡령 및 실적 악화로 인해 **{target}**이 시장에서 퇴출됩니다.\n\n보유하신 주식의 **매수가 10%를 청산금으로 지급**합니다.\n대상자: {compensation_msg if compensation_msg else '없음'}", color=discord.Color.dark_red())
             await channel.send(embed=embed)
@@ -375,31 +390,38 @@ def clean_user_delisted_stocks(uid):
 @bot.command(name="내정보")
 async def 내정보(ctx):
     uid = ctx.author.id
-    
-    # 1. 최신 데이터 동기화
     sync_user_data(uid, ctx.author.name)
     
-    # 2. [핵심] 정보를 보여주기 전에 상폐된 주식 먼저 청소
+    # 찌꺼기 주식 청소
     clean_user_delisted_stocks(uid)
     
     stocks_list = user_stocks.get(uid, {})
     
-    # 3. 안전하게 주식 목록 문자열 생성 (데이터 구조 호환성 유지)
     stock_text_list = []
     for name, data in stocks_list.items():
-        # 데이터가 딕셔너리 구조면 'qty'를, 아니면 단순 숫자로 처리
+        # 데이터가 딕셔너리 구조면 값을 추출, 아니면 기본값 설정
         if isinstance(data, dict):
             qty = data.get('qty', 0)
+            avg_p = data.get('avg_price', 0)
         else:
-            qty = data  # 과거 데이터 대응
-            
-        # 보유 수량이 0보다 클 때만 표시
+            qty = data
+            avg_p = 0 # 과거 데이터는 평단 정보가 없음
+        
         if qty > 0:
-            stock_text_list.append(f"**{name}**: {qty:,}주")
+            # 현재가 확인 (시장에 없으면 마지막 가격을 참고하거나 0)
+            current_p = stocks.get(name, 0)
+            
+            # 수익률 계산 (평단이 0이면 0%)
+            if avg_p > 0:
+                profit_rate = ((current_p - avg_p) / avg_p) * 100
+                profit_str = f"({profit_rate:+.2f}%)"
+            else:
+                profit_str = "(평단 정보 없음)"
+            
+            stock_text_list.append(f"**{name}**: {qty:,}주 | 평단: `{avg_p:,}원` | 수익률: `{profit_str}`")
     
     stock_str = "\n".join(stock_text_list) if stock_text_list else "보유 주식 없음"
     
-    # 4. 임베드 출력
     embed = discord.Embed(title=f"👤 {user_names.get(uid, '알수없음')}님의 정보", color=discord.Color.blue())
     embed.add_field(name="💰 보유 현금", value=f"{user_money.get(uid, 0):,}원", inline=False)
     embed.add_field(name="📈 보유 주식", value=stock_str, inline=False)
@@ -917,38 +939,45 @@ async def 공지(ctx, *, args: str = None):
 @bot.command(name="랭킹")
 async def 랭킹(ctx):
     try:
-        all_users = list(users_col.find({}))
-        if not all_users:
-            return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
-
         ranking_data = []
-        for u in all_users:
-            st = u.get("stocks", {})
+        
+        # 1. DB의 모든 유저 데이터를 가져옴
+        for u in users_col.find({}):
+            uid = u["_id"]
+            
+            # [핵심] 활동 중인 유저라면 최신 메모리 값을 우선 사용
+            curr_money = user_money.get(uid, u.get("money", 1000))
+            curr_stocks = user_stocks.get(uid, u.get("stocks", {}))
+            curr_profit = user_profits.get(uid, u.get("profit", 0))
+            
+            # 보유 주식 가치 계산 (현재 시장가 stocks 사용)
             stock_val = 0
-            for name, data in st.items():
-                # 데이터가 딕셔너리(qty 포함)인지 단순 숫자인지 확인
+            for name, data in curr_stocks.items():
                 qty = data.get("qty", 0) if isinstance(data, dict) else data
-                if name in stocks:
-                    stock_val += (stocks[name] * qty)
+                # 실시간 시장가(stocks)가 있다면 반영, 없으면 마지막 기억 가격이라도 반영
+                price = stocks.get(name, 1000) 
+                stock_val += (price * qty)
             
             ranking_data.append({
-                "name": u.get("name", "알수없음"),
-                "total": u.get("money", 1000) + stock_val,
-                "profit": u.get("profit", 0),
+                "name": user_names.get(uid, u.get("name", "알수없음")),
+                "total": curr_money + stock_val,
+                "profit": curr_profit,
                 "att": u.get("attendance", {}).get("total", 0)
-            }) # <--- 여기가 닫혀 있어야 합니다!
+            })
 
-        # 랭킹 정렬
+        if not ranking_data:
+            return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
+
+        # 2. 정렬
         sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
         sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
 
+        # 3. 출력
         embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
         
-        # 자산 랭킹
         m_text = "\n".join([f"🥇 {r['name']}: `{r['total']:,}원`" for r in sorted_money])
         embed.add_field(name="💰 최고의 자산가 TOP 3", value=m_text, inline=False)
         
-        # 수익왕
         p_text = "\n".join([f"📈 {r['name']}: `{r['profit']:,}원`" for r in sorted_profit])
         embed.add_field(name="📈 주식 수익왕 TOP 3", value=p_text if p_text else "기록 없음", inline=False)
 
