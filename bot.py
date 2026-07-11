@@ -271,7 +271,7 @@ async def update_stocks():
         old_p = stocks[stock]
         
         # 주식 성격(변동성) 부여
-        volatility = random.uniform(0.05, 0.20)
+        volatility = random.uniform(0.01, 0.05)
         # 가격대별 상승 확률 조절 (우상향 보정)
         up_chance = 0.55 if old_p > 2000 else 0.70
         if old_p > 70000: up_chance = 0.30
