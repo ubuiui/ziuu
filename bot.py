@@ -356,6 +356,7 @@ async def on_command_error(ctx, error):
 async def 내정보(ctx):
     uid = ctx.author.id
     sync_user_data(uid, ctx.author.name)
+    clean_user_delisted_stocks(uid)
     
     money = user_money.get(uid, 1000)
     stocks_info = user_stocks.get(uid, {})
@@ -383,6 +384,7 @@ async def 내정보(ctx):
 async def 매도(ctx, name: str, qty: int):
     uid = ctx.author.id
     sync_user_data(uid, ctx.author.name)
+    clean_user_delisted_stocks(uid)
     await asyncio.sleep(0.3)
     # 1. 예외 처리
     if name not in user_stocks.get(uid, {}) or user_stocks[uid][name]["qty"] < qty:
@@ -740,7 +742,7 @@ async def 소개팅(ctx, bet: int = None):
     
     success_msg = (
         f"👑 매력 발산에 완벽하게 성공한 **{winner.mention}** 님이 최종 선택을 받았습니다!\n"
-        f"💖 **커플 탄생 성공!** 축하드립니다!\n\n"
+        f"💖 **소개팅 성공!** 축하드립니다!\n\n"
         f"💵 **정산 독식금:** 총 **{total_pool:,}원** 수령 완료!\n"
         f"🏦 **{winner.name}님의 최종 잔액:** {user_money[winner.id]:,}원"
     )
@@ -888,23 +890,23 @@ async def 공지(ctx, *, args: str = None):
 @bot.command(name="랭킹")
 async def 랭킹(ctx):
     try:
-        # 1. DB에서 모든 유저 데이터 가져오기 (실시간 데이터 반영)
         all_users = list(users_col.find({}))
-        if not all_users:
-            return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
+        if not all_users: return await ctx.send("아직 데이터가 없습니다.")
 
         ranking_data = []
         for u in all_users:
-            # 주식 가치 합산 (현재 stocks 딕셔너리 기준)
             st = u.get("stocks", {})
-            stock_val = sum([stocks.get(name, 0) * count for name, count in st.items() if name in stocks])
+            # [수정된 부분] 안전하게 계산
+            stock_val = 0
+            for name, count in st.items():
+                if name in stocks: # 현재 시장에 존재하는 주식만 가격 합산
+                    stock_val += (stocks[name] * count['qty']) # 여기서 count는 {'qty': 10, 'avg_price': ...} 딕셔너리 구조
             
             ranking_data.append({
                 "name": u.get("name", "알수없음"),
                 "total": u.get("money", 1000) + stock_val,
                 "profit": u.get("profit", 0),
                 "att": u.get("attendance", {}).get("total", 0)
-            })
 
         # 2. 정렬 (상위 3명 추출)
         sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
@@ -955,6 +957,8 @@ async def 말해(ctx, channel: discord.TextChannel, *, message: str):
 async def 정보(ctx, m: discord.Member = None):
     m = m or ctx.author
     uid = m.id
+
+    clean_user_delisted_stocks(uid)
     
     # 1. DB에서 가장 최신 데이터를 강제로 불러오기 (이게 핵심!)
     data = users_col.find_one({"_id": uid})
