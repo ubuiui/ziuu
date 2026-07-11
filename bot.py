@@ -21,7 +21,8 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # [2] 전역 변수 초기화 (여기서 다 정의해야 에러가 안 납니다)
 stocks = {}          # 실제로는 DB에서 불러오지만 초기화 필수
-delisted_stocks = {} # <--- 이게 없어서 봇이 죽었던 겁니다!
+delisted_stocks = {}
+to_be_delisted = []
 user_money = {}
 user_stocks = {}
 user_names = {}
@@ -189,11 +190,20 @@ NEWS_DB = {
 
 # --- [주식 변동 시스템] ---
 # [3] 주식 변동 및 리포트 (기존 루프를 이걸로 교체하세요)
+# [전체 구조 통합 및 수정된 주식 시스템]
+
 @tasks.loop(minutes=3)
 async def update_stocks():
     global force_next_event
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if not channel: return
+  
+    if to_be_delisted:
+        for name in list(to_be_delisted):
+            if name in stocks:
+                del stocks[name]
+                await channel.send(f"🚨 **관리자 명령:** {name} 주식이 시장에서 강제 퇴출되었습니다.")
+        to_be_delisted = []
     
     # 1. 재상장 로직
     for name, delist_time in list(delisted_stocks.items()):
@@ -202,20 +212,22 @@ async def update_stocks():
             del delisted_stocks[name]
             await channel.send(f"🔄 **{name}** 주식이 시장에 재상장되었습니다!")
 
-    # 2. 뉴스 이벤트 발생
+    # 실시간 변동 추적을 위한 딕셔너리
+    price_changes = {s: {"old": stocks[s]} for s in stocks if s not in delisted_stocks}
+
+    # 2. 뉴스 이벤트 발생 (가격 우선 적용 및 DB 기록)
     if random.random() < 0.2 or force_next_event:
         force_next_event = False
         target = random.choice([s for s in stocks if s not in delisted_stocks])
         is_good = random.random() < 0.5
+        change_rate = random.uniform(0.15, 0.40)
         
         # 가격 변경
-        change_rate = random.uniform(0.15, 0.40)
         stocks[target] = int(stocks[target] * (1 + change_rate)) if is_good else int(stocks[target] * (1 - change_rate))
         
-        # 즉시 DB 기록
-        db["price_history"].insert_one({"name": target, "price": stocks[target], "time": datetime.datetime.now()})
+        # 즉시 기록
+        db["price_history"].insert_one({"name": target, "price": stocks[target], "time": datetime.datetime.now(KST)})
         
-        # 뉴스 전송
         category = "호재" if is_good else "악재"
         news_text = random.choice(NEWS_DB[category]).format(name=target)
         embed = discord.Embed(
@@ -225,11 +237,11 @@ async def update_stocks():
         )
         await channel.send(embed=embed)
 
-        # 악재일 경우 상장폐지 체크
         if not is_good and stocks[target] <= 1000 and random.random() < 0.3:
             delisted_stocks[target] = datetime.datetime.now()
-            await channel.send(f"⚠️ **{target} 상장폐지!** 보유하신 주식이 연속된 주가하락으로 상장폐지 되었습니다.")
+            await channel.send(f"⚠️ **{target} 상장폐지!**")
             del stocks[target]
+            del price_changes[target]
 
     # 3. 시장 변동 계산 및 리포트 작성
     report_desc = ""
@@ -240,21 +252,30 @@ async def update_stocks():
         rate = random.uniform(1.01, 1.06) if random.random() < 0.5 else random.uniform(0.94, 0.99)
         new_p = int(old_p * rate)
         
-        diff_percent = ((new_p - old_p) / old_p) * 100
-        icon = "📈" if new_p > old_p else ("📉" if new_p < old_p else "➖")
-        report_desc += f"{icon} **{stock}** | `{old_p:,}원` → `{new_p:,}원` (`{diff_percent:+.2f}%`)\n"
+        # 변동률 및 이모티콘 결정
+        start_p = price_changes[stock]["old"]
+        diff_percent = ((new_p - start_p) / start_p) * 100
+        
+        if diff_percent > 2.0:   icon = "🚀"
+        elif diff_percent > 0:   icon = "📈"
+        elif diff_percent < -2.0: icon = "🚨"
+        elif diff_percent < 0:    icon = "📉"
+        else:                    icon = "➖"
+        
+        report_desc += f"{icon} **{stock}** | `{start_p:,}원` → `{new_p:,}원` (`{diff_percent:+.2f}%`)\n"
         
         stocks[stock] = new_p
-        db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now()})
+        db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now(KST)})
         
-        # 자동 유지 로직 (데이터 20개 제한)
+        # 20개 자동 유지 로직
         if db["price_history"].count_documents({"name": stock}) > 20:
             oldest = db["price_history"].find({"name": stock}).sort("time", 1).limit(1)
             for doc in oldest: db["price_history"].delete_one({"_id": doc["_id"]})
 
-    # 4. 리포트 전송
+    # 4. 최종 리포트 전송
     embed = discord.Embed(title="📊 실시간 시장 변동 리포트", description=report_desc, color=discord.Color.gold())
     await channel.send(embed=embed)
+
 # --- 주식 그래프 ---
 @bot.command()
 async def 차트(ctx, name: str):
@@ -975,6 +996,19 @@ async def 강제뉴스(ctx):
     force_next_event = True
     last_force_news_time = now
     await ctx.send("✅ **다음 턴에 무조건 시장 이벤트(호재/악재)가 발생하도록 예약했습니다!**")
+
+# --- 관리자 전용 : 상장폐지 강제 실행 ---
+@bot.command(name="상장폐지")
+@commands.has_permissions(administrator=True)
+async def 상장폐지(ctx, name: str):
+    if name not in stocks:
+        return await ctx.send(f"❌ {name}은(는) 현재 시장에 없는 주식입니다.")
+    
+    if name not in to_be_delisted:
+        to_be_delisted.append(name)
+        await ctx.send(f"⚠️ {name} 주식이 다음 턴에 상장폐지 예정입니다.")
+    else:
+        await ctx.send(f"이미 상장폐지 대기 중입니다.")
 
 
 # --- 👑 관리자 전용: 유저 전체 데이터 조회 ---
