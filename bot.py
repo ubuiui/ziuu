@@ -182,52 +182,105 @@ NEWS_DB = {
 }
 
 # --- [주식 변동 시스템] ---
+# [3] 주식 변동 및 리포트 (기존 루프를 이걸로 교체하세요)
 @tasks.loop(minutes=3)
 async def update_stocks():
     global force_next_event
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if not channel: return
     
-    # [1] 재상장
+    # 1. 재상장 로직
     for name, delist_time in list(delisted_stocks.items()):
         if datetime.datetime.now() - delist_time >= datetime.timedelta(minutes=10):
             stocks[name] = random.randint(1000, 10000)
             del delisted_stocks[name]
+            await channel.send(f"🔄 **{name}** 주식이 시장에 재상장되었습니다!")
 
-    # [2] 시장 변동
-    for stock in stocks:
+    # 2. 시장 변동 계산 및 리포트 작성
+    report_text = "📊 **[시장 실시간 리포트]**\n"
+    for stock in list(stocks.keys()):
         if stock in delisted_stocks: continue
-        current_p = stocks[stock]
-        up_chance = 0.55 if current_p < 10000 else (0.45 if current_p > 50000 else 0.50)
+        
+        old_p = stocks[stock]
+        up_chance = 0.55 if old_p < 10000 else (0.45 if old_p > 50000 else 0.50)
         rate = random.uniform(1.01, 1.06) if random.random() < up_chance else random.uniform(0.94, 0.99)
-        stocks[stock] = int(stocks[stock] * rate)
+        new_p = int(old_p * rate)
+        
+        # 화살표 표시
+        icon = "🔺" if new_p > old_p else ("🔻" if new_p < old_p else "➖")
+        report_text += f"{icon} **{stock}**: {old_p:,}원 → {new_p:,}원\n"
+        stocks[stock] = new_p
+        
+        # 차트 기록 저장
+        db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now()})
 
-    # [3] 뉴스 이벤트
+    await channel.send(report_text)
+
+    # 3. 뉴스 이벤트 (확률적 발생)
     if random.random() < 0.2 or force_next_event:
         force_next_event = False
         target = random.choice([s for s in stocks if s not in delisted_stocks])
-        is_high = stocks[target] > 50000
-        is_good = random.random() < (0.3 if is_high else 0.6)
+        is_good = random.random() < 0.5
         
-        news_entry = list(db["news_db"].find({"type": "good" if is_good else "bad"}))
-        news_text = random.choice(news_entry)["text"] if news_entry else ("호재 발생!" if is_good else "악재 발생!")
+        # [중요] 사용자가 지정한 뉴스 문구 호출
+        category = "호재" if is_good else "악재"
+        # NEWS_DB는 코드 상단에 리스트로 정의되어 있어야 합니다.
+        news_text = random.choice(NEWS_DB[category]).format(name=target)
         
-        embed = discord.Embed(title="📢 [속보]", description=f"{'🔴' if is_good else '🔵'} **[{'호재!' if is_good else '악재!'}]**\n\n{target} 주식이 '{news_text}'로 인해 **{'급등' if is_good else '급락'}** 할 것으로 보입니다!", color=discord.Color.red() if is_good else discord.Color.blue())
+        embed = discord.Embed(
+            title="📢 [속보]", 
+            description=f"{'🔴' if is_good else '🔵'} **[{'호재!' if is_good else '악재!'}]**\n\n{news_text}\n\n이로 인해 **{'급등' if is_good else '급락'}** 할 것으로 보입니다!", 
+            color=discord.Color.red() if is_good else discord.Color.blue()
+        )
         await channel.send(embed=embed)
         
+        # 가격 반영 및 상장폐지 체크
         change_rate = random.uniform(0.15, 0.40)
-        if is_good: stocks[target] = int(stocks[target] * (1 + change_rate))
+        if is_good: 
+            stocks[target] = int(stocks[target] * (1 + change_rate))
         else:
             stocks[target] = int(stocks[target] * (1 - change_rate))
+            
+            # [상장폐지 로직 복구]
             if stocks[target] <= 1000 and random.random() < 0.05:
                 delisted_stocks[target] = datetime.datetime.now()
                 mentions = [f"<@{uid}>" for uid, portfolio in user_stocks.items() if target in portfolio]
-                if mentions:
-                    await channel.send(f"⚠️ **{target} 상장폐지!** {' '.join(mentions)}\n보유하신 주식이 상장폐지 되어 강제 청산되었습니다.")
+                await channel.send(f"⚠️ **{target} 상장폐지!** {' '.join(mentions)}\n보유하신 주식이 휴지 조각이 되었습니다.")
                 for uid in [u for u, s in user_stocks.items() if target in s]:
                     del user_stocks[uid][target]
                     save_user_db(uid)
                 del stocks[target]
+
+# --- 주식 그래프 ---
+@bot.command()
+async def 차트(ctx, name: str):
+    if name not in stocks:
+        return await ctx.send("❌ 존재하지 않는 주식입니다.")
+    
+    # 최근 10개만 불러오기
+    history = list(db["price_history"].find({"name": name}).sort("time", -1).limit(10))
+    
+    if not history:
+        return await ctx.send("📉 아직 데이터가 없습니다.")
+
+    # 텍스트 차트 만들기
+    chart_text = f"📈 **[{name}] 최근 변동 추이**\n```\n"
+    prices = [h['price'] for h in history]
+    
+    for i in range(len(history)):
+        h = history[i]
+        time_str = h['time'].strftime('%H:%M')
+        # 이전 가격과 비교해서 아이콘 표시
+        icon = ""
+        if i < len(history) - 1:
+            if h['price'] > history[i+1]['price']: icon = "🔺"
+            elif h['price'] < history[i+1]['price']: icon = "🔻"
+            else: icon = "➖"
+        
+        chart_text += f"{time_str} | {h['price']:,}원 {icon}\n"
+    
+    chart_text += "```"
+    await ctx.send(chart_text)
 
 # ==========================================
 # [신규 기능: 주식, 강화, 던전, 보물찾기]
