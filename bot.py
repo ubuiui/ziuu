@@ -202,7 +202,7 @@ async def update_stocks():
                 del stocks[name]
                 await channel.send(f"🚨 **관리자 명령:** {name} 주식이 시장에서 강제 퇴출되었습니다.")
         to_be_delisted = []
-
+    
     # 2. 재상장 로직
     for name, delist_time in list(delisted_stocks.items()):
         if datetime.datetime.now() - delist_time >= datetime.timedelta(minutes=10):
@@ -232,7 +232,7 @@ async def update_stocks():
         )
         await channel.send(embed=embed)
 
-        # 상장폐지 및 보상금 지급 로직 (들여쓰기 수정 완료)
+        # 상장폐지 및 보상금 지급 로직
         if not is_good and stocks.get(target, 1000) <= 1000 and random.random() < 0.3:
             compensation_msg = ""
             for uid, portfolio in user_stocks.items():
@@ -259,7 +259,7 @@ async def update_stocks():
     # 4. 시장 변동 계산 및 리포트 작성
     report_desc = ""
     for stock in list(stocks.keys()):
-        if stock in delisted_stocks: continue
+        if stock in delisted_stocks or stock not in stocks: continue
         
         old_p = stocks[stock]
         rate = random.uniform(1.01, 1.06) if random.random() < 0.5 else random.uniform(0.94, 0.99)
@@ -268,13 +268,25 @@ async def update_stocks():
         start_p = price_changes[stock]["old"]
         diff_percent = ((new_p - start_p) / start_p) * 100
         
-        if diff_percent > 2.0:   icon = "🚀"
-        elif diff_percent > 0:   icon = "📈"
-        elif diff_percent < -2.0: icon = "🚨"
-        elif diff_percent < 0:    icon = "📉"
-        else:                    icon = "➖"
+        # [수정] 이모티콘 기준 10%로 변경
+        if diff_percent > 10.0:    icon = "🚀"
+        elif diff_percent > 0:     icon = "📈"
+        elif diff_percent < -10.0: icon = "🚨"
+        elif diff_percent < 0:     icon = "📉"
+        else:                      icon = "➖"
         
         report_desc += f"{icon} **{stock}** | `{start_p:,}원` → `{new_p:,}원` (`{diff_percent:+.2f}%`)\n"
+        
+        # [추가] 1000원 미만 경고 로직
+        if new_p < 1000:
+            report_desc += f"⚠️ *{stock} 상장폐지 위험!*\n"
+            if random.random() < 0.2: # 20% 확률로 경고 속보 전송
+                warning_embed = discord.Embed(
+                    title="⚠️ [상장폐지 위험 속보!]",
+                    description=f"**{stock}** 주식이 상장 유지 최소 금액인 1,000원 밑으로 내려갔습니다.\n주가가 개선되지 않으면 곧 상장 폐지될 수 있습니다. 투자에 주의하시길 바랍니다.",
+                    color=discord.Color.orange()
+                )
+                await channel.send(embed=warning_embed)
         
         stocks[stock] = new_p
         db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now(KST)})
@@ -1013,7 +1025,7 @@ async def 상장폐지(ctx, name: str):
     
     if name not in to_be_delisted:
         to_be_delisted.append(name)
-        await ctx.send(f"⚠️ {name} 주식이 다음 턴에 상장폐지 예정입니다.")
+        await ctx.send(f"⚠️ {name} 주식이 다음 변동에 상장폐지 예정입니다.")
     else:
         await ctx.send(f"이미 상장폐지 대기 중입니다.")
 
