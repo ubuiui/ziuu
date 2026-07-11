@@ -365,16 +365,30 @@ async def on_command_error(ctx, error):
 @bot.command(name="내정보")
 async def 내정보(ctx):
     uid = ctx.author.id
+    
+    # 1. 사용자 데이터 동기화
     sync_user_data(uid, ctx.author.name)
-    clean_user_delisted_stocks(uid) # 보유 주식 청소 후 정보 출력
     
-    # 여기서 user_stocks[uid]를 안전하게 읽기
+    # 2. 상장폐지된 '찌꺼기' 데이터 정리 (에러 방지 핵심!)
+    clean_user_delisted_stocks(uid)
+    
+    # 3. 안전하게 데이터 가져오기
     stocks_list = user_stocks.get(uid, {})
-    stock_str = "\n".join([f"{name}: {data['qty']}주 (평단:{data['avg_price']:,}원)" for name, data in stocks_list.items()]) if stocks_list else "보유 주식 없음"
     
-    embed = discord.Embed(title=f"{user_names[uid]}님의 정보", color=discord.Color.blue())
-    embed.add_field(name="💰 보유 현금", value=f"{user_money[uid]:,}원", inline=False)
+    # 4. 주식 정보 텍스트 생성
+    stock_text_list = []
+    for name, data in stocks_list.items():
+        # 데이터가 딕셔너리(새 구조)인지 숫자인지 체크하여 안전하게 출력
+        qty = data.get('qty', 0) if isinstance(data, dict) else data
+        stock_text_list.append(f"**{name}**: {qty:,}주")
+    
+    stock_str = "\n".join(stock_text_list) if stock_text_list else "보유 주식 없음"
+    
+    # 5. 임베드 출력
+    embed = discord.Embed(title=f"👤 {user_names.get(uid, '알수없음')}님의 정보", color=discord.Color.blue())
+    embed.add_field(name="💰 보유 현금", value=f"{user_money.get(uid, 0):,}원", inline=False)
     embed.add_field(name="📈 보유 주식", value=stock_str, inline=False)
+    
     await ctx.send(embed=embed)
 
 # --- 주식 매도 기능 ---
