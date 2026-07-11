@@ -891,49 +891,40 @@ async def 공지(ctx, *, args: str = None):
 async def 랭킹(ctx):
     try:
         all_users = list(users_col.find({}))
-        if not all_users: return await ctx.send("아직 데이터가 없습니다.")
+        if not all_users:
+            return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
 
         ranking_data = []
         for u in all_users:
             st = u.get("stocks", {})
-            # [수정된 부분] 안전하게 계산
             stock_val = 0
-            for name, count in st.items():
-                if name in stocks: # 현재 시장에 존재하는 주식만 가격 합산
-                    stock_val += (stocks[name] * count['qty']) # 여기서 count는 {'qty': 10, 'avg_price': ...} 딕셔너리 구조
+            for name, data in st.items():
+                # 데이터가 딕셔너리(qty 포함)인지 단순 숫자인지 확인
+                qty = data.get("qty", 0) if isinstance(data, dict) else data
+                if name in stocks:
+                    stock_val += (stocks[name] * qty)
             
             ranking_data.append({
                 "name": u.get("name", "알수없음"),
                 "total": u.get("money", 1000) + stock_val,
                 "profit": u.get("profit", 0),
                 "att": u.get("attendance", {}).get("total", 0)
+            }) # <--- 여기가 닫혀 있어야 합니다!
 
-        # 2. 정렬 (상위 3명 추출)
+        # 랭킹 정렬
         sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
         sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
-        
-        # 출첵왕 정렬
-        attendance_rank = sorted([r for r in ranking_data if r['att'] > 0], key=lambda x: x['att'], reverse=True)
-        top_att = attendance_rank[0] if attendance_rank else None
 
-        # 3. 결과 출력 (임베드)
-        medals = ['🥇', '🥈', '🥉']
-        
         embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
         
         # 자산 랭킹
-        m_text = "\n".join([f"{medals[i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
+        m_text = "\n".join([f"🥇 {r['name']}: `{r['total']:,}원`" for r in sorted_money])
         embed.add_field(name="💰 최고의 자산가 TOP 3", value=m_text, inline=False)
         
         # 수익왕
-        p_text = "\n".join([f"{medals[i]} {r['name']}: `{r['profit']:,}원`" for i, r in enumerate(sorted_profit)])
+        p_text = "\n".join([f"📈 {r['name']}: `{r['profit']:,}원`" for r in sorted_profit])
         embed.add_field(name="📈 주식 수익왕 TOP 3", value=p_text if p_text else "기록 없음", inline=False)
-        
-        # 출첵왕
-        att_val = f"📅 {top_att['name']}님 (`{top_att['att']}회 출석`)" if top_att else "데이터 없음"
-        embed.add_field(name="🔥 성실 보스! 출첵왕", value=att_val, inline=False)
 
-        embed.set_footer(text="꾸준한 투자와 출석으로 순위를 올려보세요!")
         await ctx.send(embed=embed)
         
     except Exception as e:
