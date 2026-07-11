@@ -237,11 +237,29 @@ async def update_stocks():
         )
         await channel.send(embed=embed)
 
-        if not is_good and stocks[target] <= 1000 and random.random() < 0.3:
-            delisted_stocks[target] = datetime.datetime.now()
-            await channel.send(f"⚠️ **{target} 상장폐지!**")
-            del stocks[target]
-            del price_changes[target]
+        if not is_good and stocks.get(target, 1000) <= 1000 and random.random() < 0.3:
+        # 1. 보상금 지급 로직
+        compensation_msg = ""
+        for uid, portfolio in user_stocks.items():
+            if target in portfolio:
+                # 보상금: (수량 * 매수가 * 0.1)
+                refund = int(portfolio[target]['qty'] * portfolio[target]['avg_price'] * 0.1)
+                user_money[uid] += refund
+                compensation_msg += f"<@{uid}> "
+        
+        # 2. 드라마틱한 공지
+        embed = discord.Embed(
+            title=f"🚨 [충격!] {target} 상장폐지!",
+            description=f"경영진의 횡령 및 실적 악화로 인해 **{target}**이 시장에서 퇴출됩니다.\n\n"
+                        f"보유하신 주식의 **매수가 10%를 청산금으로 지급**해 드립니다.\n"
+                        f"청산 대상자: {compensation_msg if compensation_msg else '없음'}",
+            color=discord.Color.dark_red()
+        )
+        await channel.send(embed=embed)
+        
+        # 3. 데이터 삭제
+        delisted_stocks[target] = datetime.datetime.now()
+        del stocks[target]
 
     # 3. 시장 변동 계산 및 리포트 작성
     report_desc = ""
@@ -352,31 +370,19 @@ async def on_command_error(ctx, error):
         if isinstance(error.original, discord.errors.HTTPException) and error.original.status == 429:
             await ctx.send("⚠️ 디스코드 API 제한에 걸렸습니다. 10초만 기다려 주세요!")
 
-@bot.command()
+@bot.command(name="내정보")
 async def 내정보(ctx):
     uid = ctx.author.id
     sync_user_data(uid, ctx.author.name)
-    clean_user_delisted_stocks(uid)
+    clean_user_delisted_stocks(uid) # 보유 주식 청소 후 정보 출력
     
-    money = user_money.get(uid, 1000)
-    stocks_info = user_stocks.get(uid, {})
+    # 여기서 user_stocks[uid]를 안전하게 읽기
+    stocks_list = user_stocks.get(uid, {})
+    stock_str = "\n".join([f"{name}: {data['qty']}주 (평단:{data['avg_price']:,}원)" for name, data in stocks_list.items()]) if stocks_list else "보유 주식 없음"
     
-    # [수정] 내주식 로직을 이곳에 통합
-    stock_str = ""
-    for name, data in stocks_info.items():
-        if data["qty"] > 0:
-            current_price = stocks[name]
-            profit = ((current_price - data["avg_price"]) / data["avg_price"]) * 100
-            profit_icon = "📈" if profit >= 0 else "📉"
-            stock_str += f"- **{name}**: {data['qty']}주 | 평단:{data['avg_price']:,}원 | 수익:{profit_icon} {profit:.1f}%\n"
-    
-    if not stock_str: stock_str = "보유 주식이 없습니다."
-    
-    embed = discord.Embed(title=f"👤 {ctx.author.name}님의 정보", color=discord.Color.blue())
-    embed.add_field(name="💰 보유 자산", value=f"{money:,}원", inline=False)
+    embed = discord.Embed(title=f"{user_names[uid]}님의 정보", color=discord.Color.blue())
+    embed.add_field(name="💰 보유 현금", value=f"{user_money[uid]:,}원", inline=False)
     embed.add_field(name="📈 보유 주식", value=stock_str, inline=False)
-    embed.add_field(name="📅 출석 횟수", value=f"{attendance_data.get(uid, {}).get('total', 0)}회", inline=True)
-    
     await ctx.send(embed=embed)
 
 # --- 주식 매도 기능 ---
