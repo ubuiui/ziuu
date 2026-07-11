@@ -209,10 +209,10 @@ async def update_stocks():
         # 등락률 계산 및 아이콘 설정
         diff_percent = ((new_p - old_p) / old_p) * 100
         if new_p > old_p:
-            icon = "🔺"
+            icon = "📈"
             percent_text = f"+{diff_percent:.2f}%"
         elif new_p < old_p:
-            icon = "🔻"
+            icon = "📉 "
             percent_text = f"{diff_percent:.2f}%"
         else:
             icon = "➖"
@@ -859,55 +859,46 @@ async def 공지(ctx, *, args: str = None):
 # --- 🏆 통합 랭킹 시스템 ---
 @bot.command()
 async def 랭킹(ctx):
-    # DB에서 돈(money) 순서대로 상위 5명 불러오기
-    cursor = users_col.find().sort("money", -1).limit(5)
-    
-    embed = discord.Embed(title="👑 서버 자산 랭킹 TOP 5", color=discord.Color.gold())
-    rank_text = ""
-    for idx, doc in enumerate(cursor):
-        name = doc.get("name", "알수없음")
-        money = doc.get("money", 0)
-        rank_text += f"{idx+1}위: {name} - `{money:,}원`\n"
-    
-    embed.description = rank_text if rank_text else "데이터가 없습니다."
-    await ctx.send(embed=embed)
+    # 1. DB에서 모든 유저 데이터 가져오기
+    all_users = list(users_col.find({}))
+    if not all_users:
+        return await ctx.send("데이터가 없습니다.")
 
+    # 2. 데이터 가공 (총자산 = 현금 + 주식가치)
+    ranking_data = []
+    for u in all_users:
+        uid = u["_id"]
+        money = u.get("money", 1000)
+        st = u.get("stocks", {})
+        # 현재 주식 가격 기준 가치 계산
+        stock_val = sum([stocks.get(name, 0) * count for name, count in st.items()])
+        ranking_data.append({
+            "name": u.get("name", "알수없음"),
+            "total": money + stock_val,
+            "profit": u.get("profit", 0),
+            "att": u.get("attendance", {"total": 0})["total"]
+        })
+
+    # 3. 정렬 함수
+    sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
+    sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
+    top_att = max(ranking_data, key=lambda x: x["att"])
+
+    # 4. 임베드 작성
+    embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
+    
     # 자산 랭킹
-    sorted_money = sorted(user_money.items(), key=lambda x: x[1], reverse=True)[:3]
-    money_text = ""
-    money_emojis = ["🥇", "🥈", "🥉"]
-    for idx, (uid, money) in enumerate(sorted_money):
-        name = user_names.get(uid, "알수없는유저")
-        money_text += f"{money_emojis[idx]} **{idx+1}위** - {name} : `{money:,}원`\n"
+    m_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
+    embed.add_field(name="💰 최고의 자산가 TOP 3", value=m_text, inline=False)
     
-    embed.add_field(name="💰 서버 최고의 자산가 TOP 3", value=money_text or "데이터 없음", inline=False)
-    attendance_kings = sorted(attendance_data.items(), key=lambda x: x[1]["total"], reverse=True)
-    att_text = "아직 출석체크 데이터가 없습니다."
-    if attendance_kings:
-        top_uid, top_data = attendance_kings[0]
-        if top_data["total"] > 0:
-            name = user_names.get(top_uid, f"유저({top_uid})")
-            att_text = f"📅 **{name}**님 (누적 출석: `{top_data['total']}회` / 현재 연속: `{top_data['streak']}일`)"
-    embed.add_field(name="🔥 성실 보스! 오늘의 출첵왕", value=att_text, inline=False)
-
-    broke_users = [uid for uid, money in user_money.items() if money <= 0]
-    broke_text = "❌ 현재 파산한 유저가 없습니다! 평화롭군요."
-    if broke_users:
-        names = [user_names.get(uid, f"유저({uid})") for uid in broke_users]
-        broke_text = f"📉 💸 **{', '.join(names)}** (현재 자산 0원 이하)\n*💡 `!재난지원금` 명령어로 부활을 노려보세요!*"
-    embed.add_field(name="🚨 비운의 주인공! 실시간 파산왕 명단", value=broke_text, inline=False)
-
-    sorted_profit = sorted(user_profits.items(), key=lambda x: x[1], reverse=True)[:3]
-    profit_text = ""
-    for idx, (uid, profit) in enumerate(sorted_profit):
-        name = user_names.get(uid, f"유저({uid})")
-        profit_text += f"{money_emojis[idx]} **{idx+1}위** - {name} : `{profit:,}원`\n"
+    # 수익왕 랭킹
+    p_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{r['profit']:,}원`" for i, r in enumerate(sorted_profit)])
+    embed.add_field(name="📈 주식 수익왕 TOP 3", value=p_text or "기록 없음", inline=False)
     
-    if not profit_text or profit_text == "": 
-        profit_text = "기록이 없습니다."
-    embed.add_field(name="📈 주식 수익왕 (순수 수익 TOP 3)", value=profit_text, inline=False)
+    # 출첵왕
+    embed.add_field(name="🔥 성실 보스! 출첵왕", value=f"📅 {top_att['name']}님 (`{top_att['att']}회 출석`)", inline=False)
 
-    embed.set_footer(text="꾸준한 출석과 도박 한탕으로 타이틀을 쟁탈해 보세요!")
+    embed.set_footer(text="꾸준한 노력으로 상위권에 도전하세요!")
     await ctx.send(embed=embed)
 
 @bot.command()
