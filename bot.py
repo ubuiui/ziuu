@@ -189,6 +189,7 @@ NEWS_DB = {
 }
 
 # --- [주식 변동 시스템] ---
+# --- [주식 변동 시스템] ---
 @tasks.loop(minutes=3)
 async def update_stocks():
     global force_next_event, to_be_delisted
@@ -199,7 +200,7 @@ async def update_stocks():
     if to_be_delisted:
         for name in list(to_be_delisted):
             if name in stocks:
-                # 보상금 지급 로직 (관리자 상폐 시에도 지급)
+                # 보상금 지급 로직
                 compensation_msg = ""
                 for uid, portfolio in user_stocks.items():
                     if name in portfolio:
@@ -209,8 +210,11 @@ async def update_stocks():
                         refund = int(qty * avg_p * 0.1)
                         if refund > 0:
                             user_money[uid] = user_money.get(uid, 1000) + refund
-                            users_col.update_one({"_id": uid}, {"$inc": {"money": refund}}) # DB 동기화
+                            users_col.update_one({"_id": uid}, {"$inc": {"money": refund}})
                             compensation_msg += f"<@{uid}> "
+                
+                # 재상장 루프가 돌 수 있도록 명단에 추가
+                delisted_stocks[name] = datetime.datetime.now()
                 
                 await channel.send(f"🚨 **관리자 명령:** {name} 주식이 시장에서 강제 퇴출되었습니다.\n보유자 보상금 지급 대상: {compensation_msg if compensation_msg else '없음'}")
                 del stocks[name]
@@ -241,7 +245,6 @@ async def update_stocks():
         embed = discord.Embed(title="📢 [예빈뉴스 긴급속보!]", description=f"{'🔴' if is_good else '🔵'} **[{category} 발생!]**\n\n{news_text}\n\n현재가: `{stocks[target]:,}원`", color=discord.Color.red() if is_good else discord.Color.blue())
         await channel.send(embed=embed)
 
-        # 상장폐지 및 보상금 지급 (뉴스 발생 후 즉시 처리)
         if not is_good and stocks.get(target, 1000) <= 1000 and random.random() < 0.3:
             compensation_msg = ""
             for uid, portfolio in user_stocks.items():
@@ -252,7 +255,7 @@ async def update_stocks():
                     refund = int(qty * avg_p * 0.1)
                     if refund > 0:
                         user_money[uid] = user_money.get(uid, 1000) + refund
-                        users_col.update_one({"_id": uid}, {"$inc": {"money": refund}}) # DB 동기화
+                        users_col.update_one({"_id": uid}, {"$inc": {"money": refund}})
                         compensation_msg += f"<@{uid}> "
             
             embed = discord.Embed(title=f"🚨 [충격!] {target} 상장폐지!", description=f"경영진의 횡령 및 실적 악화로 인해 **{target}**이 시장에서 퇴출됩니다.\n\n보유하신 주식의 **매수가 10%를 청산금으로 지급**합니다.\n대상자: {compensation_msg if compensation_msg else '없음'}", color=discord.Color.dark_red())
@@ -266,8 +269,20 @@ async def update_stocks():
     for stock in list(stocks.keys()):
         if stock in delisted_stocks or stock not in stocks: continue
         old_p = stocks[stock]
-        rate = random.uniform(1.01, 1.06) if random.random() < 0.5 else random.uniform(0.94, 0.99)
+        
+        # 주식 성격(변동성) 부여
+        volatility = random.uniform(0.05, 0.20)
+        # 가격대별 상승 확률 조절 (우상향 보정)
+        up_chance = 0.55 if old_p > 2000 else 0.70
+        if old_p > 70000: up_chance = 0.30
+        
+        if random.random() < up_chance:
+            rate = 1.0 + volatility
+        else:
+            rate = 1.0 - (volatility * 0.8)
+            
         new_p = int(old_p * rate)
+        new_p = max(1000, new_p) # 가격 1000원 방어
         
         start_p = price_changes.get(stock, {"old": old_p})["old"]
         diff_percent = ((new_p - start_p) / start_p) * 100
@@ -279,9 +294,6 @@ async def update_stocks():
         else: icon = "➖"
         
         report_desc += f"{icon} **{stock}** | `{start_p:,}원` → `{new_p:,}원` (`{diff_percent:+.2f}%`)\n"
-        
-        # 1,000원 미만 위험 알림
-        if new_p < 1000: report_desc += f"⚠️ *{stock} 상장폐지 위험!*\n"
         
         stocks[stock] = new_p
         db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now(KST)})
