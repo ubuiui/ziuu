@@ -188,8 +188,7 @@ NEWS_DB = {
     ]
 }
 
-# --- [주식 변동 시스템] ---
-# --- [주식 변동 시스템] ---
+# -- 주식 시스템 --
 @tasks.loop(minutes=3)
 async def update_stocks():
     global force_next_event, to_be_delisted
@@ -230,7 +229,7 @@ async def update_stocks():
     # 실시간 변동 추적을 위한 딕셔너리
     price_changes = {s: {"old": stocks[s]} for s in stocks if s not in delisted_stocks}
 
-    # 3. 뉴스 이벤트 및 상장폐지 로직
+    # 3. 뉴스 이벤트 로직
     if random.random() < 0.2 or force_next_event:
         force_next_event = False
         target = random.choice([s for s in stocks if s not in delisted_stocks])
@@ -245,7 +244,10 @@ async def update_stocks():
         embed = discord.Embed(title="📢 [예빈뉴스 긴급속보!]", description=f"{'🔴' if is_good else '🔵'} **[{category} 발생!]**\n\n{news_text}\n\n현재가: `{stocks[target]:,}원`", color=discord.Color.red() if is_good else discord.Color.blue())
         await channel.send(embed=embed)
 
-        if not is_good and stocks.get(target, 1000) <= 1000 and random.random() < 0.3:
+    # 3.5 독립 상장폐지 체크 (뉴스 무관, 1000원인 경우 30% 확률로 상폐)
+    for target in list(stocks.keys()):
+        if target in delisted_stocks: continue
+        if stocks.get(target, 1000) <= 1000 and random.random() < 0.3:
             compensation_msg = ""
             for uid, portfolio in user_stocks.items():
                 if target in portfolio:
@@ -258,7 +260,7 @@ async def update_stocks():
                         users_col.update_one({"_id": uid}, {"$inc": {"money": refund}})
                         compensation_msg += f"<@{uid}> "
             
-            embed = discord.Embed(title=f"🚨 [충격!] {target} 상장폐지!", description=f"경영진의 횡령 및 실적 악화로 인해 **{target}**이 시장에서 퇴출됩니다.\n\n보유하신 주식의 **매수가 10%를 청산금으로 지급**합니다.\n대상자: {compensation_msg if compensation_msg else '없음'}", color=discord.Color.dark_red())
+            embed = discord.Embed(title=f"🚨 [충격!] {target} 상장폐지!", description=f"경영 악화로 인해 **{target}**이 시장에서 퇴출됩니다.\n\n보유하신 주식의 **매수가 10%를 청산금으로 지급**합니다.\n대상자: {compensation_msg if compensation_msg else '없음'}", color=discord.Color.dark_red())
             await channel.send(embed=embed)
             
             delisted_stocks[target] = datetime.datetime.now()
@@ -282,7 +284,7 @@ async def update_stocks():
             rate = 1.0 - (volatility * 0.8)
             
         new_p = int(old_p * rate)
-        new_p = max(1000, new_p) # 가격 1000원 방어
+        new_p = max(100, new_p) # 가격 1000원 방어
         
         start_p = price_changes.get(stock, {"old": old_p})["old"]
         diff_percent = ((new_p - start_p) / start_p) * 100
@@ -384,29 +386,27 @@ async def on_command_error(ctx, error):
 
 # -- 내정보 기능 --
 def clean_user_delisted_stocks(uid):
-    """사용자가 보유한 주식 중 상장폐지된 종목을 자동으로 삭제하고 DB를 업데이트합니다."""
+    """사용자가 보유한 주식 중 현재 시장(stocks)에 없는 종목을 강력하게 삭제합니다."""
     if uid in user_stocks:
-        # 삭제 대상: 현재 시장(stocks)에 없고, 재상장 대기 중(delisted_stocks)도 아닌 종목
-        keys_to_delete = [
-            name for name in user_stocks[uid].keys() 
-            if name not in stocks and name not in delisted_stocks
-        ]
+        # 시장(stocks)에 등록되어 있지 않은 모든 주식을 삭제 대상으로 선정
+        # 재상장 대기 중이어도 시장 데이터에 없으면 삭제하는 것이 맞습니다.
+        keys_to_delete = [name for name in user_stocks[uid].keys() if name not in stocks]
         
         if keys_to_delete:
             for name in keys_to_delete:
+                # 메모리에서 삭제
                 del user_stocks[uid][name]
             
-            # 삭제가 발생했다면 반드시 DB에 즉시 반영
-            # save_user_db(uid) 함수가 정의되어 있다면 그대로 사용하시고, 
-            # 만약 직접 DB 갱신이 필요하다면 아래와 같이 처리 가능합니다.
+            # DB에 변경된 포트폴리오를 즉시 덮어쓰기하여 동기화
             users_col.update_one({"_id": uid}, {"$set": {"stocks": user_stocks[uid]}})
+            print(f"DEBUG: {uid}님의 계좌에서 상장폐지된 주식 {keys_to_delete} 삭제 및 DB 동기화 완료.")
 
 @bot.command(name="내정보")
 async def 내정보(ctx):
     uid = ctx.author.id
     sync_user_data(uid, ctx.author.name)
     
-    # 찌꺼기 주식 청소 (상장폐지된 종목 제거)
+    # [수정] 찌꺼기 주식 청소 (상장폐지된 종목 제거)
     clean_user_delisted_stocks(uid)
     
     stocks_list = user_stocks.get(uid, {})
@@ -419,13 +419,13 @@ async def 내정보(ctx):
             avg_p = data.get('avg_price', 0)
         else:
             qty = data
-            avg_p = 0 # 과거 데이터는 평단 정보가 없음
+            avg_p = 0
         
         if qty > 0:
-            # 현재가 확인 (시장에 없으면 마지막 가격을 참고하거나 0)
+            # 시장에 있는 주식만 현재가를 가져옴 (없으면 0)
             current_p = stocks.get(name, 0)
             
-            # 수익률 계산 (평단이 0이면 0%)
+            # 수익률 계산
             if avg_p > 0:
                 profit_rate = ((current_p - avg_p) / avg_p) * 100
                 profit_str = f"({profit_rate:+.2f}%)"
