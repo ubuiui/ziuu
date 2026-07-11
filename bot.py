@@ -866,30 +866,56 @@ async def 공지(ctx, *, args: str = None):
 # --- 🏆 통합 랭킹 시스템 ---
 @bot.command(name="랭킹")
 async def 랭킹(ctx):
-    all_users = list(users_col.find({}))
-    if not all_users: return await ctx.send("데이터가 없습니다.")
+    try:
+        # 1. DB에서 모든 유저 데이터 가져오기 (실시간 데이터 반영)
+        all_users = list(users_col.find({}))
+        if not all_users:
+            return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
 
-    ranking_data = []
-    for u in all_users:
-        stock_val = sum([stocks.get(n, 0) * c for n, c in u.get("stocks", {}).items() if n in stocks])
-        ranking_data.append({
-            "name": u.get("name", "유저"),
-            "total": u.get("money", 1000) + stock_val,
-            "profit": u.get("profit", 0),
-            "att": u.get("attendance", {}).get("total", 0)
-        })
+        ranking_data = []
+        for u in all_users:
+            # 주식 가치 합산 (현재 stocks 딕셔너리 기준)
+            st = u.get("stocks", {})
+            stock_val = sum([stocks.get(name, 0) * count for name, count in st.items() if name in stocks])
+            
+            ranking_data.append({
+                "name": u.get("name", "알수없음"),
+                "total": u.get("money", 1000) + stock_val,
+                "profit": u.get("profit", 0),
+                "att": u.get("attendance", {}).get("total", 0)
+            })
 
-    sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
-    sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
-    
-    medals = ['🥇', '🥈', '🥉']
-    m_text = "\n".join([f"{medals[i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
-    p_text = "\n".join([f"{medals[i]} {r['name']}: `{r['profit']:,}원`" for i, r in enumerate(sorted_profit)])
-    
-    embed = discord.Embed(title="🏆 서버 통합 랭킹", color=discord.Color.gold())
-    embed.add_field(name="💰 자산 TOP 3", value=m_text, inline=False)
-    embed.add_field(name="📈 수익왕 TOP 3", value=p_text, inline=False)
-    await ctx.send(embed=embed)
+        # 2. 정렬 (상위 3명 추출)
+        sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
+        sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
+        
+        # 출첵왕 정렬
+        attendance_rank = sorted([r for r in ranking_data if r['att'] > 0], key=lambda x: x['att'], reverse=True)
+        top_att = attendance_rank[0] if attendance_rank else None
+
+        # 3. 결과 출력 (임베드)
+        medals = ['🥇', '🥈', '🥉']
+        
+        embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
+        
+        # 자산 랭킹
+        m_text = "\n".join([f"{medals[i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
+        embed.add_field(name="💰 최고의 자산가 TOP 3", value=m_text, inline=False)
+        
+        # 수익왕
+        p_text = "\n".join([f"{medals[i]} {r['name']}: `{r['profit']:,}원`" for i, r in enumerate(sorted_profit)])
+        embed.add_field(name="📈 주식 수익왕 TOP 3", value=p_text if p_text else "기록 없음", inline=False)
+        
+        # 출첵왕
+        att_val = f"📅 {top_att['name']}님 (`{top_att['att']}회 출석`)" if top_att else "데이터 없음"
+        embed.add_field(name="🔥 성실 보스! 출첵왕", value=att_val, inline=False)
+
+        embed.set_footer(text="꾸준한 투자와 출석으로 순위를 올려보세요!")
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        print(f"랭킹 에러 발생: {e}")
+        await ctx.send("❌ 랭킹을 불러오는 중 오류가 발생했습니다.")
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
