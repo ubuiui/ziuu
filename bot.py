@@ -196,8 +196,8 @@ async def update_stocks():
             del delisted_stocks[name]
             await channel.send(f"🔄 **{name}** 주식이 시장에 재상장되었습니다!")
 
-    # 2. 시장 변동 계산 및 리포트 작성
-    report_text = "📊 **[시장 실시간 리포트]**\n"
+    # 2. 시장 변동 계산 및 리포트 작성 (Embed UI)
+    report_desc = ""
     for stock in list(stocks.keys()):
         if stock in delisted_stocks: continue
         
@@ -206,15 +206,32 @@ async def update_stocks():
         rate = random.uniform(1.01, 1.06) if random.random() < up_chance else random.uniform(0.94, 0.99)
         new_p = int(old_p * rate)
         
-        # 화살표 표시
-        icon = "🔺" if new_p > old_p else ("🔻" if new_p < old_p else "➖")
-        report_text += f"{icon} **{stock}**: {old_p:,}원 → {new_p:,}원\n"
+        # 등락률 계산 및 아이콘 설정
+        diff_percent = ((new_p - old_p) / old_p) * 100
+        if new_p > old_p:
+            icon = "🔺"
+            percent_text = f"+{diff_percent:.2f}%"
+        elif new_p < old_p:
+            icon = "🔻"
+            percent_text = f"{diff_percent:.2f}%"
+        else:
+            icon = "➖"
+            percent_text = "0.00%"
+            
+        report_desc += f"{icon} **{stock}** | `{old_p:,}원` → `{new_p:,}원` (`{percent_text}`)\n"
         stocks[stock] = new_p
         
-        # 차트 기록 저장
+        # 차트 기록 저장 및 20개 자동 유지 로직
         db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now()})
+        if db["price_history"].count_documents({"name": stock}) > 20:
+            oldest = db["price_history"].find({"name": stock}).sort("time", 1).limit(1)
+            for doc in oldest:
+                db["price_history"].delete_one({"_id": doc["_id"]})
 
-    await channel.send(report_text)
+    # 리포트 전송 (Embed)
+    embed = discord.Embed(title="📊 실시간 시장 변동 리포트", description=report_desc, color=discord.Color.gold())
+    embed.set_footer(text="3분마다 시장 상황이 자동 갱신됩니다.")
+    await channel.send(embed=embed)
 
     # 3. 뉴스 이벤트 (확률적 발생)
     if random.random() < 0.2 or force_next_event:
@@ -222,9 +239,7 @@ async def update_stocks():
         target = random.choice([s for s in stocks if s not in delisted_stocks])
         is_good = random.random() < 0.5
         
-        # [중요] 사용자가 지정한 뉴스 문구 호출
         category = "호재" if is_good else "악재"
-        # NEWS_DB는 코드 상단에 리스트로 정의되어 있어야 합니다.
         news_text = random.choice(NEWS_DB[category]).format(name=target)
         
         embed = discord.Embed(
@@ -234,14 +249,13 @@ async def update_stocks():
         )
         await channel.send(embed=embed)
         
-        # 가격 반영 및 상장폐지 체크
         change_rate = random.uniform(0.15, 0.40)
         if is_good: 
             stocks[target] = int(stocks[target] * (1 + change_rate))
         else:
             stocks[target] = int(stocks[target] * (1 - change_rate))
             
-            # [상장폐지 로직 복구]
+            # 상장폐지 로직
             if stocks[target] <= 1000 and random.random() < 0.05:
                 delisted_stocks[target] = datetime.datetime.now()
                 mentions = [f"<@{uid}>" for uid, portfolio in user_stocks.items() if target in portfolio]
