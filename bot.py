@@ -195,14 +195,14 @@ async def update_stocks():
     channel = bot.get_channel(NOTICE_CHANNEL_ID)
     if not channel: return
     
-    # 1. 관리자 강제 상장폐지 처리
+    # 1. 관리자 강제 상장폐지 처리 (루프 최상단에서 즉시 처리)
     if to_be_delisted:
         for name in list(to_be_delisted):
             if name in stocks:
                 del stocks[name]
                 await channel.send(f"🚨 **관리자 명령:** {name} 주식이 시장에서 강제 퇴출되었습니다.")
         to_be_delisted = []
-    
+
     # 2. 재상장 로직
     for name, delist_time in list(delisted_stocks.items()):
         if datetime.datetime.now() - delist_time >= datetime.timedelta(minutes=10):
@@ -213,7 +213,7 @@ async def update_stocks():
     # 실시간 변동 추적을 위한 딕셔너리
     price_changes = {s: {"old": stocks[s]} for s in stocks if s not in delisted_stocks}
 
-    # 3. 뉴스 이벤트 발생
+    # 3. 뉴스 이벤트 및 상장폐지 로직
     if random.random() < 0.2 or force_next_event:
         force_next_event = False
         target = random.choice([s for s in stocks if s not in delisted_stocks])
@@ -225,14 +225,10 @@ async def update_stocks():
         
         category = "호재" if is_good else "악재"
         news_text = random.choice(NEWS_DB[category]).format(name=target)
-        embed = discord.Embed(
-            title="📢 [예빈뉴스 긴급속보!]", 
-            description=f"{'🔴' if is_good else '🔵'} **[{category} 발생!]**\n\n{news_text}\n\n현재가: `{stocks[target]:,}원`", 
-            color=discord.Color.red() if is_good else discord.Color.blue()
-        )
+        embed = discord.Embed(title="📢 [예빈뉴스 긴급속보!]", description=f"{'🔴' if is_good else '🔵'} **[{category} 발생!]**\n\n{news_text}\n\n현재가: `{stocks[target]:,}원`", color=discord.Color.red() if is_good else discord.Color.blue())
         await channel.send(embed=embed)
 
-        # 상장폐지 및 보상금 지급 로직
+        # 상장폐지 및 보상금 지급 (뉴스 발생 후 즉시 처리)
         if not is_good and stocks.get(target, 1000) <= 1000 and random.random() < 0.3:
             compensation_msg = ""
             for uid, portfolio in user_stocks.items():
@@ -242,15 +238,9 @@ async def update_stocks():
                     avg_p = data.get('avg_price', 0) if isinstance(data, dict) else 0
                     refund = int(qty * avg_p * 0.1)
                     user_money[uid] = user_money.get(uid, 1000) + refund
-                    compensation_msg += f"<@{uid}>({refund:,}원) "
+                    compensation_msg += f"<@{uid}> "
             
-            embed = discord.Embed(
-                title=f"🚨 [충격!] {target} 상장폐지!",
-                description=f"경영진의 횡령 및 실적 악화로 인해 **{target}**이 시장에서 퇴출됩니다.\n\n"
-                            f"보유하신 주식의 **매수가 10%를 청산금으로 지급**해 드립니다.\n"
-                            f"청산 대상자: {compensation_msg if compensation_msg else '없음'}",
-                color=discord.Color.dark_red()
-            )
+            embed = discord.Embed(title=f"🚨 [충격!] {target} 상장폐지!", description=f"경영진의 횡령 및 실적 악화로 인해 **{target}**이 시장에서 퇴출됩니다.\n\n보유하신 주식의 **매수가 10%를 청산금으로 지급**합니다.\n대상자: {compensation_msg if compensation_msg else '없음'}", color=discord.Color.dark_red())
             await channel.send(embed=embed)
             
             delisted_stocks[target] = datetime.datetime.now()
@@ -260,33 +250,23 @@ async def update_stocks():
     report_desc = ""
     for stock in list(stocks.keys()):
         if stock in delisted_stocks or stock not in stocks: continue
-        
         old_p = stocks[stock]
         rate = random.uniform(1.01, 1.06) if random.random() < 0.5 else random.uniform(0.94, 0.99)
         new_p = int(old_p * rate)
         
-        start_p = price_changes[stock]["old"]
+        start_p = price_changes.get(stock, {"old": old_p})["old"]
         diff_percent = ((new_p - start_p) / start_p) * 100
         
-        # [수정] 이모티콘 기준 10%로 변경
-        if diff_percent > 10.0:    icon = "🚀"
-        elif diff_percent > 0:     icon = "📈"
+        if diff_percent > 10.0: icon = "🚀"
+        elif diff_percent > 0: icon = "📈"
         elif diff_percent < -10.0: icon = "🚨"
-        elif diff_percent < 0:     icon = "📉"
-        else:                      icon = "➖"
+        elif diff_percent < 0: icon = "📉"
+        else: icon = "➖"
         
         report_desc += f"{icon} **{stock}** | `{start_p:,}원` → `{new_p:,}원` (`{diff_percent:+.2f}%`)\n"
         
-        # [추가] 1000원 미만 경고 로직
-        if new_p < 1000:
-            report_desc += f"⚠️ *{stock} 상장폐지 위험!*\n"
-            if random.random() < 0.2: # 20% 확률로 경고 속보 전송
-                warning_embed = discord.Embed(
-                    title="⚠️ [상장폐지 위험 속보!]",
-                    description=f"**{stock}** 주식이 상장 유지 최소 금액인 1,000원 밑으로 내려갔습니다.\n주가가 개선되지 않으면 곧 상장 폐지될 수 있습니다. 투자에 주의하시길 바랍니다.",
-                    color=discord.Color.orange()
-                )
-                await channel.send(embed=warning_embed)
+        # 1,000원 미만 위험 알림
+        if new_p < 1000: report_desc += f"⚠️ *{stock} 상장폐지 위험!*\n"
         
         stocks[stock] = new_p
         db["price_history"].insert_one({"name": stock, "price": new_p, "time": datetime.datetime.now(KST)})
@@ -295,8 +275,9 @@ async def update_stocks():
             oldest = db["price_history"].find({"name": stock}).sort("time", 1).limit(1)
             for doc in oldest: db["price_history"].delete_one({"_id": doc["_id"]})
 
-    embed = discord.Embed(title="📊 실시간 시장 변동 리포트", description=report_desc, color=discord.Color.gold())
-    await channel.send(embed=embed)
+    if report_desc:
+        embed = discord.Embed(title="📊 실시간 시장 변동 리포트", description=report_desc, color=discord.Color.gold())
+        await channel.send(embed=embed)
 
 # --- 주식 그래프 ---
 @bot.command()
