@@ -1,4 +1,8 @@
-import os, asyncio, datetime, random
+import os
+import asyncio
+import datetime
+import random
+from datetime import timezone, timedelta
 import discord
 from discord.ext import commands, tasks
 from flask import Flask
@@ -6,6 +10,8 @@ from threading import Thread
 from pymongo import MongoClient
 import certifi
 import flask
+
+KST = timezone(timedelta(hours=9))
 
 # [1] 봇 설정 및 선언 (딱 한 번만 선언해야 합니다!)
 intents = discord.Intents.default()
@@ -271,25 +277,31 @@ async def 차트(ctx, name: str):
     if name not in stocks:
         return await ctx.send("❌ 존재하지 않는 주식입니다.")
     
-    # 최근 10개만 불러오기
+    # 최근 10개 데이터 불러오기 (시간 역순)
     history = list(db["price_history"].find({"name": name}).sort("time", -1).limit(10))
     
     if not history:
         return await ctx.send("📉 아직 데이터가 없습니다.")
 
-    # 텍스트 차트 만들기
-    chart_text = f"📈 **[{name}] 최근 변동 추이**\n```\n"
-    prices = [h['price'] for h in history]
+    # 텍스트 차트 헤더
+    chart_text = f"📈 **[{name}] 최근 변동 추이 (KST 기준)**\n```\n"
+    
+    # 데이터를 시간 순으로 정렬하기 위해 리스트 뒤집기 (최신이 마지막으로 오게)
+    history.reverse()
     
     for i in range(len(history)):
         h = history[i]
-        time_str = h['time'].strftime('%H:%M')
-        # 이전 가격과 비교해서 아이콘 표시
-        icon = ""
-        if i < len(history) - 1:
-            if h['price'] > history[i+1]['price']: icon = "🔺"
-            elif h['price'] < history[i+1]['price']: icon = "🔻"
-            else: icon = "➖"
+        
+        # [핵심 수정] UTC 시간을 한국 시간으로 변환
+        # DB의 시간이 naive(정보 없음)라면 먼저 UTC로 인지시킨 후 KST로 변환
+        korea_time = h['time'].replace(tzinfo=timezone.utc).astimezone(KST)
+        time_str = korea_time.strftime('%H:%M')
+        
+        # 등락 아이콘 표시 (현재와 직전 데이터 비교)
+        icon = "➖"
+        if i > 0:
+            if h['price'] > history[i-1]['price']: icon = "📈"
+            elif h['price'] < history[i-1]['price']: icon = "📉"
         
         chart_text += f"{time_str} | {h['price']:,}원 {icon}\n"
     
@@ -449,7 +461,7 @@ async def play_blackjack(ctx, bet):
                 p_s, d_s = get_score(data['p']), get_score(data['d'])
                 if d_s > 21 or p_s > d_s:
                     await main_msg.edit(embed=create_embed(uid, data, "🏆 승리!", is_final=True))
-                    win_amount = data['bet'] * 2
+                    win_amount = data['bet'] * 1.3
                     await start_double_or_nothing(ctx, win_amount, step=0)
                 elif p_s == d_s:
                     await main_msg.edit(embed=create_embed(uid, data, "🤝 무승부", is_final=True))
@@ -736,29 +748,40 @@ async def 소개팅(ctx, bet: int = None):
 @bot.command()
 async def 출석(ctx):
     uid = ctx.author.id
-    # 현재 시간 기준 날짜
-    today = datetime.date.today().isoformat()
+    name = ctx.author.name
     
+    # [1] 데이터 동기화: 이 함수가 없으면 봇은 이 유저의 기존 데이터를 모릅니다.
+    sync_user_data(uid, name)
+    
+    # [2] 한국 시간대 기준 오늘 날짜 (KST 사용)
+    today = datetime.datetime.now(KST).strftime('%Y-%m-%d')
+    yesterday = (datetime.datetime.now(KST) - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # [3] 데이터 접근 (sync_user_data에서 초기화된 attendance_data 사용)
     if uid not in attendance_data:
         attendance_data[uid] = {"streak": 0, "total": 0, "last_date": ""}
     
-    # [핵심] 오늘 이미 출석했는지 정확히 확인
-    if attendance_data[uid].get("last_date") == today:
+    user_att = attendance_data[uid]
+    
+    # [4] 출석 확인
+    if user_att.get("last_date") == today:
         return await ctx.send("❌ 오늘은 이미 출석하셨습니다. 내일 다시 시도해주세요!")
     
-    # 연속 출석 체크 (어제 출석했는지 확인)
-    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-    if attendance_data[uid].get("last_date") != yesterday:
-        attendance_data[uid]["streak"] = 1 # 끊겼으면 1일부터 시작
+    # [5] 연속 출석 로직
+    if user_att.get("last_date") != yesterday:
+        user_att["streak"] = 1 # 끊겼으면 1일부터
     else:
-        attendance_data[uid]["streak"] += 1
+        user_att["streak"] += 1
         
-    attendance_data[uid]["total"] += 1
-    attendance_data[uid]["last_date"] = today
+    # [6] 데이터 반영
+    user_att["total"] += 1
+    user_att["last_date"] = today
     user_money[uid] = user_money.get(uid, 1000) + 500
     
+    # [7] DB 저장 (sync_user_data에서 메모리에 로드된 정보를 저장)
     save_user_db(uid)
-    await ctx.send(f"✅ 출석 완료! (+500원) 현재 연속 출석: {attendance_data[uid]['streak']}일째")
+    
+    await ctx.send(f"✅ 출석 완료! (+500원)\n현재 연속 출석: `{user_att['streak']}일째` | 누적 출석: `{user_att['total']}회`")
 
 # --- 🎁 신규 기능: 10분 주기 랜덤 선물 기능 ---
 @bot.command()
@@ -857,54 +880,42 @@ async def 공지(ctx, *, args: str = None):
     await ctx.send(content="@everyone", embed=embed)
 
 # --- 🏆 통합 랭킹 시스템 ---
-@bot.command()
+@bot.command(name="랭킹")
 async def 랭킹(ctx):
-    # 1. DB에서 모든 유저 데이터 가져오기
-    all_users = list(users_col.find({}))
-    if not all_users:
-        return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
+    try:
+        # DB에서 유저 데이터 전체 로드
+        all_users = list(users_col.find({}))
+        if not all_users:
+            return await ctx.send("아직 기록된 유저 데이터가 없습니다.")
 
-    # 2. 데이터 가공 (총자산 = 현금 + 보유주식 가치)
-    ranking_data = []
-    for u in all_users:
-        uid = u["_id"]
-        money = u.get("money", 1000)
-        st = u.get("stocks", {})
+        ranking_data = []
+        for u in all_users:
+            money = u.get("money", 1000)
+            st = u.get("stocks", {})
+            # 주식 현재가 계산
+            stock_val = sum([stocks.get(name, 0) * count for name, count in st.items() if name in stocks])
+            
+            ranking_data.append({
+                "name": u.get("name", "알수없음"),
+                "total": money + stock_val,
+                "profit": u.get("profit", 0),
+                "att": u.get("attendance", {}).get("total", 0)
+            })
+
+        # 정렬
+        sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
+        sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
+        attendance_rank = sorted([r for r in ranking_data if r['att'] > 0], key=lambda x: x['att'], reverse=True)
+        top_att = attendance_rank[0] if attendance_rank else None
+
+        embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
         
-        # 현재 주식 가격 기준 총 자산 계산
-        stock_val = sum([stocks.get(name, 0) * count for name, count in st.items()])
-        ranking_data.append({
-            "name": u.get("name", "알수없음"),
-            "total": money + stock_val,
-            "profit": u.get("profit", 0),
-            "att": u.get("attendance", {}).get("total", 0)
-        })
-
-    # 3. 정렬 로직
-    sorted_money = sorted(ranking_data, key=lambda x: x["total"], reverse=True)[:3]
-    sorted_profit = sorted(ranking_data, key=lambda x: x["profit"], reverse=True)[:3]
-    
-    # 출첵왕 찾기 (데이터가 있는 경우에만)
-    attendance_rank = sorted([r for r in ranking_data if r['att'] > 0], key=lambda x: x['att'], reverse=True)
-    top_att = attendance_rank[0] if attendance_rank else None
-
-    # 4. 임베드 작성
-    embed = discord.Embed(title="🏆 서버 통합 랭킹 시스템", color=discord.Color.gold())
-    
-    # 자산 랭킹
-    m_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
-    embed.add_field(name="💰 최고의 자산가 TOP 3", value=m_text, inline=False)
-    
-    # 수익왕 랭킹
-    p_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{r['profit']:,}원`" for i, r in enumerate(sorted_profit)])
-    embed.add_field(name="📈 주식 수익왕 TOP 3", value=p_text if p_text else "기록 없음", inline=False)
-    
-    # 출첵왕
-    att_val = f"📅 {top_att['name']}님 (`{top_att['att']}회 출석`)" if top_att else "데이터 없음"
-    embed.add_field(name="🔥 성실 보스! 출첵왕", value=att_val, inline=False)
-
-    embed.set_footer(text="꾸준한 투자와 출석으로 순위를 올려보세요!")
-    await ctx.send(embed=embed)
+        # 자산 랭킹
+        m_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{r['total']:,}원`" for i, r in enumerate(sorted_money)])
+        embed.add_field(name="💰 최고의 자산가 TOP 3", value=m_text, inline=False)
+        
+        # 수익왕
+        p_text = "\n".join([f"{['🥇', '🥈', '🥉'][i]} {r['name']}: `{
 
 @bot.command()
 async def 블랙잭(ctx, bet: int = 1000): await play_blackjack(ctx, bet)
