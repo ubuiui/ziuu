@@ -223,7 +223,7 @@ async def update_stocks():
     # 2. 재상장 로직
     for name, delist_time in list(delisted_stocks.items()):
         if datetime.datetime.now() - delist_time >= datetime.timedelta(minutes=10):
-            stocks[name] = random.randint(1000, 10000)
+            stocks[name] = random.randint(3000, 15000)
             del delisted_stocks[name]
             await channel.send(f"🔄 **{name}** 주식이 시장에 재상장되었습니다!")
 
@@ -397,14 +397,16 @@ def clean_user_delisted_stocks(uid):
                 del user_stocks[uid][name]
             
             # 삭제가 발생했다면 반드시 DB에 즉시 반영
-            save_user_db(uid) 
+            # save_user_db(uid) 함수가 정의되어 있다면 그대로 사용하시고, 
+            # 만약 직접 DB 갱신이 필요하다면 아래와 같이 처리 가능합니다.
+            users_col.update_one({"_id": uid}, {"$set": {"stocks": user_stocks[uid]}})
 
 @bot.command(name="내정보")
 async def 내정보(ctx):
     uid = ctx.author.id
     sync_user_data(uid, ctx.author.name)
     
-    # 찌꺼기 주식 청소
+    # 찌꺼기 주식 청소 (상장폐지된 종목 제거)
     clean_user_delisted_stocks(uid)
     
     stocks_list = user_stocks.get(uid, {})
