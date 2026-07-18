@@ -247,7 +247,7 @@ async def update_stocks():
     # 3.5 독립 상장폐지 체크 (뉴스 무관, 1000원인 경우 30% 확률로 상폐)
     for target in list(stocks.keys()):
         if target in delisted_stocks: continue
-        if stocks.get(target, 1000) <= 1000 and random.random() < 0.3:
+        if random.random() < 0.05:
             compensation_msg = ""
             for uid, portfolio in user_stocks.items():
                 if target in portfolio:
