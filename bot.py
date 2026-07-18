@@ -226,7 +226,7 @@ async def update_stocks():
     # 2. 재상장 로직
     for name, delist_time in list(delisted_stocks.items()):
         if datetime.datetime.now() - delist_time >= datetime.timedelta(minutes=10):
-            stocks[name] = random.randint(3000, 15000)
+            stocks[name] = random.randint(50000, 70000)
             del delisted_stocks[name]
             await channel.send(f"🔄 **{name}** 주식이 시장에 재상장되었습니다!")
 
