@@ -273,10 +273,10 @@ async def update_stocks():
         old_p = stocks[stock]
         
         # 주식 성격(변동성) 부여
-        volatility = random.uniform(0.01, 0.05)
+        volatility = random.uniform(0.02, 0.10)
         # 가격대별 상승 확률 조절 (우상향 보정)
-        up_chance = 0.55 if old_p > 2000 else 0.70
-        if old_p > 70000: up_chance = 0.30
+        up_chance = 0.45 if old_p > 2000 else 0.60
+        if old_p > 70000: up_chance = 0.20
         
         if random.random() < up_chance:
             rate = 1.0 + volatility
@@ -307,6 +307,40 @@ async def update_stocks():
     if report_desc:
         embed = discord.Embed(title="📊 실시간 시장 변동 리포트", description=report_desc, color=discord.Color.gold())
         await channel.send(embed=embed)
+
+# --- 세무조사 시스템 (6시간 주기) ---
+@tasks.loop(hours=6)
+async def tax_audit():
+    channel = bot.get_channel(NOTICE_CHANNEL_ID)
+    if not channel: return
+    
+    # 10억 이상 보유자만 필터링
+    rich_list = [uid for uid, money in user_money.items() if money >= 1000000000]
+    if not rich_list: return
+    
+    target_uid = random.choice(rich_list)
+    tax = int(user_money[target_uid] * 0.1) # 10% 징수
+    user_money[target_uid] -= tax
+    save_user_db(target_uid)
+    
+    await channel.send(f"🚨 **[국세청]** 초고액 자산가 **{user_names.get(target_uid, '누군가')}**님의 탈세 혐의가 적발되었습니다. 세금 `{tax:,}원`을 강제 환수합니다.")
+
+# --- 투자 사기 이벤트 (4시간 주기) ---
+@tasks.loop(hours=4)
+async def investment_scam():
+    channel = bot.get_channel(NOTICE_CHANNEL_ID)
+    if not channel: return
+    
+    # 5만 원 이상 가진 유저만 대상
+    victims = [uid for uid, money in user_money.items() if money >= 50000]
+    if not victims: return
+    
+    target_uid = random.choice(victims)
+    loss = int(user_money[target_uid] * random.uniform(0.05, 0.15)) # 5~15% 손실
+    user_money[target_uid] -= loss
+    save_user_db(target_uid)
+    
+    await channel.send(f"⚠️ **[긴급]** **{user_names.get(target_uid, '익명')}**님이 '강남 300% 수익 보장' 투자 사기에 휘말려 `{loss:,}원`을 사기당했습니다!")
 
 # --- 주식 그래프 ---
 @bot.command()
@@ -385,6 +419,14 @@ async def on_command_error(ctx, error):
             await ctx.send("⚠️ 디스코드 API 제한에 걸렸습니다. 10초만 기다려 주세요!")
 
 # -- 내정보 기능 --
+def apply_wealth_maintenance_fee(uid):
+    """1억 이상 보유 시 0.1% 관리 수수료 자동 차감"""
+    money = user_money.get(uid, 1000)
+    if money > 100000000: # 1억 원 이상일 때만
+        fee = int(money * 0.001) # 0.1% 수수료
+        user_money[uid] -= fee
+        save_user_db(uid)
+
 def clean_user_delisted_stocks(uid):
     """사용자가 보유한 주식 중 현재 시장(stocks)에 없는 종목을 강력하게 삭제합니다."""
     if uid in user_stocks:
@@ -406,6 +448,10 @@ async def 내정보(ctx):
     uid = ctx.author.id
     sync_user_data(uid, ctx.author.name)
     
+    apply_wealth_maintenance_fee(uid)
+    
+    sync_user_data(uid, ctx.author.name)
+
     # [수정] 찌꺼기 주식 청소 (상장폐지된 종목 제거)
     clean_user_delisted_stocks(uid)
     
@@ -1187,12 +1233,18 @@ async def on_ready():
     load_all_data() 
     print("📥 데이터베이스 데이터 로드 완료.")
     
-    # 2. 주식 변동 루프 시작 (이게 없으면 차트가 안 올라옵니다!)
+    # 2. 루프 시작 (봇이 켜질 때 딱 한 번만 실행됨)
     if not update_stocks.is_running():
         update_stocks.start()
         print("🚀 주식 변동 시스템 루프가 시작되었습니다.")
-    else:
-        print("ℹ️ 루프가 이미 실행 중입니다.")
+        
+    if not tax_audit.is_running():
+        tax_audit.start()
+        
+    if not investment_scam.is_running():
+        investment_scam.start()
+        
+    print("🚀 경제 정화 시스템 루프가 시작되었습니다.")
 
 def sync_user_data(uid, name="알수없음"):
     # 메모리에 데이터가 이미 있으면 그냥 통과
@@ -1213,10 +1265,6 @@ def sync_user_data(uid, name="알수없음"):
         user_money[uid] = 1000
         user_stocks[uid] = {}
         user_names[uid] = name
-
-@app.route('/api/healthz')
-def health():
-    return {"status": "ok"}, 200
 
 # 1. 봇 실행 함수
 if __name__ == "__main__":
